@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const { Telegraf } = require('telegraf');
+const { Telegraf, session as telegrafSession } = require('telegraf'); // <-- FIX: import session
 const axios = require('axios');
 const Captcha = require('2captcha');
 const mongoose = require('mongoose');
@@ -26,6 +26,9 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // ---------- Telegram Bot Setup ----------
 const bot = new Telegraf(process.env.BOT_TOKEN);
+// FIX: Add session middleware BEFORE any other middleware/commands
+bot.use(telegrafSession());
+
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
 
 const API_BASE = "https://api-resident.fayda.et";
@@ -119,7 +122,7 @@ bot.command('addsub', async (ctx) => {
     return ctx.reply('❌ Only buyers can add employees.');
   }
   
-  if (user.subUsers && user.subUsers.length >= 9) {
+  if ((user.subUsers || []).length >= 9) {
     return ctx.reply('❌ You already have 9 employees. Remove one first.');
   }
   
@@ -158,6 +161,7 @@ bot.command('removesub', async (ctx) => {
   });
 });
 
+// FIX: Safe removal callback
 bot.action(/remove_sub_(.+)/, async (ctx) => {
   const subId = ctx.match[1];
   const buyerId = ctx.from.id.toString();
@@ -167,7 +171,8 @@ bot.action(/remove_sub_(.+)/, async (ctx) => {
     return ctx.answerCbQuery('❌ Not authorized');
   }
   
-  buyer.subUsers = buyer.subUsers.filter(id => id !== subId);
+  // Safely filter subUsers (if undefined, treat as empty array)
+  buyer.subUsers = (buyer.subUsers || []).filter(id => id !== subId);
   await buyer.save();
   
   await User.deleteOne({ telegramId: subId });
@@ -198,10 +203,10 @@ bot.on('text', async (ctx) => {
         );
       }
       
-      if (buyer.subUsers.length >= 9) {
+      if ((buyer.subUsers || []).length >= 9) {
         return ctx.reply('❌ You already have 9 employees.');
       }
-      if (buyer.subUsers.includes(subUser.telegramId)) {
+      if ((buyer.subUsers || []).includes(subUser.telegramId)) {
         return ctx.reply('❌ This user is already your employee.');
       }
       
@@ -220,7 +225,7 @@ bot.on('text', async (ctx) => {
         `✅ Employee added successfully!\n\nThey can now use the bot.`
       );
       
-      ctx.session.step = null; // clear
+      ctx.session.step = null; // clear step but keep session alive
     } catch (error) {
       console.error('Add sub error:', error);
       ctx.reply('❌ Failed to add employee. Please try again.');
@@ -322,6 +327,35 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   res.render('dashboard', { stats, buyers });
 });
 
+// FIX: Add route to create a buyer from dashboard
+app.post('/add-buyer', requireAuth, async (req, res) => {
+  const { telegramId, expiryDays } = req.body;
+  if (!telegramId || !expiryDays) {
+    return res.status(400).send('Missing telegramId or expiryDays');
+  }
+  
+  // Check if user already exists
+  let user = await User.findOne({ telegramId });
+  if (user) {
+    // Upgrade to buyer if exists
+    user.role = 'buyer';
+    user.expiryDate = new Date(Date.now() + parseInt(expiryDays) * 24*60*60*1000);
+    await user.save();
+  } else {
+    // Create new buyer
+    user = new User({
+      telegramId,
+      role: 'buyer',
+      expiryDate: new Date(Date.now() + parseInt(expiryDays) * 24*60*60*1000),
+      subUsers: [],
+      createdAt: new Date()
+    });
+    await user.save();
+  }
+  
+  res.redirect('/dashboard');
+});
+
 app.get('/buyer/:id', requireAuth, async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.status(404).send('Buyer not found');
@@ -336,7 +370,7 @@ app.post('/buyer/:id/add-sub', requireAuth, async (req, res) => {
   const buyer = await User.findOne({ telegramId: buyerId });
   if (!buyer) return res.status(404).send('Buyer not found');
   
-  if (buyer.subUsers.length >= 9) {
+  if ((buyer.subUsers || []).length >= 9) {
     return res.status(400).send('Buyer already has 9 sub-users');
   }
   
@@ -349,7 +383,7 @@ app.post('/buyer/:id/add-sub', requireAuth, async (req, res) => {
     }
   }
   
-  if (buyer.subUsers.includes(subUser.telegramId)) {
+  if ((buyer.subUsers || []).includes(subUser.telegramId)) {
     return res.status(400).send('User already added');
   }
   
