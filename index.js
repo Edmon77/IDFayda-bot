@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const { Telegraf, session as telegrafSession } = require('telegraf'); // <-- FIX: import session
+const { Telegraf, session: telegrafSession } = require('telegraf'); // <-- FIX: import session
 const axios = require('axios');
 const Captcha = require('2captcha');
 const mongoose = require('mongoose');
