@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const { Telegraf, session: telegrafSession } = require('telegraf'); // <-- FIX: import session
+const { Telegraf, session: telegrafSession } = require('telegraf');
 const axios = require('axios');
 const Captcha = require('2captcha');
 const mongoose = require('mongoose');
@@ -26,7 +26,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // ---------- Telegram Bot Setup ----------
 const bot = new Telegraf(process.env.BOT_TOKEN);
-// FIX: Add session middleware BEFORE any other middleware/commands
+// Add session middleware
 bot.use(telegrafSession());
 
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
@@ -40,21 +40,6 @@ const HEADERS = {
   'Origin': 'https://resident.fayda.et',
   'Referer': 'https://resident.fayda.et/'
 };
-
-// Helper: PDF retry
-async function fetchPDF(authHeader, maxRetries = 3) {
-  await axios.post(`${API_BASE}/printableCredentialRoute`, {}, { headers: authHeader });
-  for (let i = 0; i < maxRetries; i++) {
-    await new Promise(r => setTimeout(r, 2000 * (i + 1)));
-    try {
-      const response = await axios.post(`${API_BASE}/printableCredentialRoute`, {}, { headers: authHeader });
-      if (response.data?.pdf) return response.data.pdf;
-    } catch (e) {
-      console.log(`Retry ${i+1}: PDF not ready...`);
-    }
-  }
-  throw new Error("PDF generation timed out.");
-}
 
 // ---------- Authorization Middleware ----------
 bot.use(async (ctx, next) => {
@@ -161,7 +146,7 @@ bot.command('removesub', async (ctx) => {
   });
 });
 
-// FIX: Safe removal callback
+// Safe removal callback
 bot.action(/remove_sub_(.+)/, async (ctx) => {
   const subId = ctx.match[1];
   const buyerId = ctx.from.id.toString();
@@ -171,7 +156,6 @@ bot.action(/remove_sub_(.+)/, async (ctx) => {
     return ctx.answerCbQuery('❌ Not authorized');
   }
   
-  // Safely filter subUsers (if undefined, treat as empty array)
   buyer.subUsers = (buyer.subUsers || []).filter(id => id !== subId);
   await buyer.save();
   
@@ -181,10 +165,10 @@ bot.action(/remove_sub_(.+)/, async (ctx) => {
   ctx.answerCbQuery();
 });
 
-// ---------- SINGLE TEXT HANDLER (merged) ----------
+// ---------- SINGLE TEXT HANDLER ----------
 bot.on('text', async (ctx) => {
   const state = ctx.session;
-  if (!state) return; // no active session
+  if (!state) return;
 
   const text = ctx.message.text.trim();
 
@@ -225,7 +209,7 @@ bot.on('text', async (ctx) => {
         `✅ Employee added successfully!\n\nThey can now use the bot.`
       );
       
-      ctx.session.step = null; // clear step but keep session alive
+      ctx.session.step = null;
     } catch (error) {
       console.error('Add sub error:', error);
       ctx.reply('❌ Failed to add employee. Please try again.');
@@ -268,16 +252,33 @@ bot.on('text', async (ctx) => {
     const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
     try {
-      await axios.post(`${API_BASE}/validateOtp`, {
+      // Validate OTP and capture response
+      const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
         otp: text,
         uniqueId: state.id,
         verificationMethod: "FCN"
       }, { headers: authHeader });
 
+      console.log('OTP response:', otpResponse.data); // Log for debugging
+
+      // Extract signature and uin (adjust field names if needed)
+      const { signature, uin } = otpResponse.data;
+      if (!signature || !uin) {
+        throw new Error('Missing signature or uin in OTP response');
+      }
+
       await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Fetching ID file...");
 
-      const base64Pdf = await fetchPDF(authHeader);
-      const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+      // Prepare payload for PDF request
+      const pdfPayload = { uin, signature };
+
+      // Fetch PDF – expecting binary PDF, not JSON
+      const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
+        headers: authHeader,
+        responseType: 'arraybuffer' // This gives a Buffer
+      });
+
+      const pdfBuffer = pdfResponse.data; // Buffer
 
       await ctx.replyWithDocument({
         source: pdfBuffer,
@@ -286,8 +287,8 @@ bot.on('text', async (ctx) => {
 
       ctx.session = null;
     } catch (e) {
-      console.error("OTP/PDF Error:", e.message);
-      ctx.reply(`❌ Failed: ${e.message === "PDF generation timed out." ? "Server too slow." : "Invalid OTP or session expired."}`);
+      console.error("OTP/PDF Error:", e.response?.data || e.message);
+      ctx.reply(`❌ Failed: ${e.message}`);
       ctx.session = null;
     }
     return;
@@ -327,22 +328,19 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   res.render('dashboard', { stats, buyers });
 });
 
-// FIX: Add route to create a buyer from dashboard
+// Add buyer via dashboard
 app.post('/add-buyer', requireAuth, async (req, res) => {
   const { telegramId, expiryDays } = req.body;
   if (!telegramId || !expiryDays) {
     return res.status(400).send('Missing telegramId or expiryDays');
   }
   
-  // Check if user already exists
   let user = await User.findOne({ telegramId });
   if (user) {
-    // Upgrade to buyer if exists
     user.role = 'buyer';
     user.expiryDate = new Date(Date.now() + parseInt(expiryDays) * 24*60*60*1000);
     await user.save();
   } else {
-    // Create new buyer
     user = new User({
       telegramId,
       role: 'buyer',
