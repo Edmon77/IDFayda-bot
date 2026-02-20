@@ -26,7 +26,6 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // ---------- Telegram Bot Setup ----------
 const bot = new Telegraf(process.env.BOT_TOKEN);
-// Add session middleware
 bot.use(telegrafSession());
 
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
@@ -146,7 +145,6 @@ bot.command('removesub', async (ctx) => {
   });
 });
 
-// Safe removal callback
 bot.action(/remove_sub_(.+)/, async (ctx) => {
   const subId = ctx.match[1];
   const buyerId = ctx.from.id.toString();
@@ -172,7 +170,7 @@ bot.on('text', async (ctx) => {
 
   const text = ctx.message.text.trim();
 
-  // ----- Step: AWAITING_SUB_IDENTIFIER (adding sub-user) -----
+  // ----- Step: AWAITING_SUB_IDENTIFIER -----
   if (state.step === 'AWAITING_SUB_IDENTIFIER') {
     const buyer = ctx.state.user;
     const statusMsg = await ctx.reply('🔍 Looking up user...');
@@ -217,7 +215,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // ----- Step: ID (Fayda login) -----
+  // ----- Step: ID -----
   if (state.step === 'ID') {
     if (!/^\d{16}$/.test(text)) {
       return ctx.reply("❌ Invalid format. Please enter exactly **16 digits**.", { parse_mode: 'Markdown' });
@@ -246,22 +244,20 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // ----- Step: OTP (Fayda OTP validation) -----
+  // ----- Step: OTP -----
   if (state.step === 'OTP') {
     const status = await ctx.reply("⏳ Verifying OTP and generating document...");
     const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
     try {
-      // Validate OTP and capture response
       const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
         otp: text,
         uniqueId: state.id,
         verificationMethod: "FCN"
       }, { headers: authHeader });
 
-      console.log('OTP response:', otpResponse.data); // Log for debugging
+      console.log('OTP response:', otpResponse.data);
 
-      // Extract signature and uin
       const { signature, uin } = otpResponse.data;
       if (!signature || !uin) {
         throw new Error('Missing signature or uin in OTP response');
@@ -269,22 +265,42 @@ bot.on('text', async (ctx) => {
 
       await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Fetching ID file...");
 
-      // Prepare payload for PDF request
       const pdfPayload = { uin, signature };
-
-      // Fetch PDF – response is a base64 string (text)
       const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
         headers: authHeader,
-        responseType: 'text' // Get the raw base64 string
+        responseType: 'text'
       });
 
-      const base64Pdf = pdfResponse.data; // This is the base64 string
+      let base64Pdf = pdfResponse.data.trim();
+
+      // If the response looks like JSON, try to extract the pdf field
+      if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
+        try {
+          const parsed = JSON.parse(base64Pdf);
+          if (parsed.pdf) {
+            base64Pdf = parsed.pdf.trim();
+          }
+        } catch (e) {
+          // Not valid JSON, keep original
+        }
+      }
+
       console.log('Base64 PDF length:', base64Pdf.length);
+      console.log('First 50 chars:', base64Pdf.substring(0, 50));
 
-      // Convert base64 to buffer
+      // Verify base64 header
+      if (!base64Pdf.startsWith('JVBERi0')) {
+        console.error('Base64 does not start with PDF header!');
+      }
+
       const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+      console.log('PDF buffer length:', pdfBuffer.length);
 
-      // Send the PDF
+      const pdfHeader = pdfBuffer.slice(0, 4).toString();
+      if (pdfHeader !== '%PDF') {
+        console.error('Decoded PDF header mismatch:', pdfHeader);
+      }
+
       await ctx.replyWithDocument({
         source: pdfBuffer,
         filename: `Fayda_Card_${state.id}.pdf`
@@ -333,7 +349,6 @@ app.get('/dashboard', requireAuth, async (req, res) => {
   res.render('dashboard', { stats, buyers });
 });
 
-// Add buyer via dashboard
 app.post('/add-buyer', requireAuth, async (req, res) => {
   const { telegramId, expiryDays } = req.body;
   if (!telegramId || !expiryDays) {
@@ -421,10 +436,8 @@ app.get('/export-users', requireAuth, async (req, res) => {
   res.send(csv);
 });
 
-// Health check endpoint (for uptime monitoring)
 app.get('/health', (req, res) => res.send('OK'));
 
-// ---------- Start Server (async to set webhook) ----------
 async function startServer() {
   try {
     const webhookPath = '/webhook';
