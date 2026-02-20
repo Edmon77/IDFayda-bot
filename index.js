@@ -261,7 +261,7 @@ bot.on('text', async (ctx) => {
 
       console.log('OTP response:', otpResponse.data); // Log for debugging
 
-      // Extract signature and uin (adjust field names if needed)
+      // Extract signature and uin
       const { signature, uin } = otpResponse.data;
       if (!signature || !uin) {
         throw new Error('Missing signature or uin in OTP response');
@@ -272,14 +272,19 @@ bot.on('text', async (ctx) => {
       // Prepare payload for PDF request
       const pdfPayload = { uin, signature };
 
-      // Fetch PDF – expecting binary PDF, not JSON
+      // Fetch PDF – response is a base64 string (text)
       const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
         headers: authHeader,
-        responseType: 'arraybuffer' // This gives a Buffer
+        responseType: 'text' // Get the raw base64 string
       });
 
-      const pdfBuffer = pdfResponse.data; // Buffer
+      const base64Pdf = pdfResponse.data; // This is the base64 string
+      console.log('Base64 PDF length:', base64Pdf.length);
 
+      // Convert base64 to buffer
+      const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+
+      // Send the PDF
       await ctx.replyWithDocument({
         source: pdfBuffer,
         filename: `Fayda_Card_${state.id}.pdf`
