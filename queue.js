@@ -1,4 +1,3 @@
-// queue.js
 const { Queue, Worker, QueueScheduler } = require('bullmq');
 const Redis = require('ioredis');
 const axios = require('axios');
@@ -12,11 +11,28 @@ if (!process.env.REDIS_URL) {
   process.exit(1);
 }
 
-// Redis connection
+// Redis connection with IPv4 and TLS
 const connection = new Redis(process.env.REDIS_URL, {
-  tls: {},          // required for rediss://
+  tls: {},               // required for rediss://
   connectTimeout: 20000,
-  enableReadyCheck: false
+  enableReadyCheck: false,
+  family: 4               // force IPv4
+});
+
+connection.on('error', (err) => {
+  console.error('❌ Redis connection error:', err.message);
+});
+
+connection.on('ready', () => {
+  console.log('✅ Redis connection ready');
+});
+
+connection.on('reconnecting', () => {
+  console.log('🔄 Redis reconnecting...');
+});
+
+connection.on('close', () => {
+  console.log('🔴 Redis connection closed');
 });
 
 // QueueScheduler handles retries, delayed jobs, etc.
@@ -61,7 +77,10 @@ const worker = new Worker('pdf generation', async (job) => {
     const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `${safeName}.pdf`;
 
-    await bot.telegram.sendDocument(chatId, { source: pdfBuffer, filename }, { caption: "✨ Your Digital ID is ready!" });
+    await bot.telegram.sendDocument(chatId, {
+      source: pdfBuffer,
+      filename
+    }, { caption: "✨ Your Digital ID is ready!" });
 
     await User.updateOne(
       { telegramId: userId },

@@ -170,6 +170,7 @@ bot.action(/remove_sub_(.+)/, async (ctx) => {
   await ctx.editMessageText(`✅ Successfully removed employee.`);
   ctx.answerCbQuery();
 });
+
 // ---------- SINGLE MESSAGE HANDLER (TEXT ONLY) ----------
 bot.on('message', async (ctx) => {
   // Only handle text messages
@@ -280,14 +281,18 @@ bot.on('message', async (ctx) => {
       const pdfPayload = { uin, signature };
       console.log('📦 Preparing job with payload keys:', Object.keys(pdfPayload));
 
-      // Enqueue the job in BullMQ
-      const job = await pdfQueue.add('generate-pdf', {
-        chatId: ctx.chat.id,
-        userId: ctx.from.id.toString(),
-        authHeader,
-        pdfPayload,
-        fullName: fullName || { eng: 'Fayda_Card' }
-      });
+      // Enqueue the job in BullMQ with a timeout to prevent hanging
+      const job = await withTimeout(
+        pdfQueue.add('generate-pdf', {
+          chatId: ctx.chat.id,
+          userId: ctx.from.id.toString(),
+          authHeader,
+          pdfPayload,
+          fullName: fullName || { eng: 'Fayda_Card' }
+        }),
+        15000,
+        'Queue add timed out'
+      );
 
       console.log(`✅ Job added with ID: ${job.id}`);
 
@@ -462,8 +467,9 @@ app.get('/test-redis', requireAuth, async (req, res) => {
     const redis = new Redis(process.env.REDIS_URL, {
       connectTimeout: 10000,
       lazyConnect: true,
-      tls: {}, // force TLS
-      retryStrategy: null // disable retries for this test
+      tls: {},               // force TLS
+      family: 4,              // force IPv4
+      retryStrategy: null     // disable retries for this test
     });
     await redis.connect();
     const pong = await redis.ping();
