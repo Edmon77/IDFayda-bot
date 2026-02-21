@@ -27,6 +27,11 @@ try {
   process.exit(1);
 }
 
+// Attach error event listener
+pdfQueue.on('error', (err) => {
+  console.error('❌ Bull queue error:', err);
+});
+
 // Verify that pdfQueue has the add method
 if (typeof pdfQueue.add !== 'function') {
   console.error('❌ pdfQueue.add is not a function! pdfQueue =', pdfQueue);
@@ -37,6 +42,7 @@ if (typeof pdfQueue.add !== 'function') {
 
 // Worker: processes jobs concurrently
 pdfQueue.process(5, async (job) => {
+  console.log(`🚀 Processing job ${job.id} for user ${job.data.userId}`);
   const { chatId, userId, authHeader, pdfPayload, id, fullName } = job.data;
 
   try {
@@ -83,7 +89,7 @@ pdfQueue.process(5, async (job) => {
 
     return { success: true };
   } catch (error) {
-    console.error(`Job failed for user ${userId}:`, error.message);
+    console.error(`❌ Job failed for user ${userId}:`, error.message);
     // Rethrow so Bull retries
     throw error;
   }

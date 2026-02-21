@@ -249,28 +249,32 @@ bot.on('text', async (ctx) => {
   }
 
   // ----- Step: OTP -----
-  if (state.step === 'OTP') {
-    const status = await ctx.reply("⏳ Verifying OTP and generating document...");
-    const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
+if (state.step === 'OTP') {
+  const status = await ctx.reply("⏳ Verifying OTP and generating document...");
+  const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
+  try {
+    const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
+      otp: text,
+      uniqueId: state.id,
+      verificationMethod: "FCN"
+    }, { headers: authHeader });
+
+    console.log('✅ OTP validation successful. Response data keys:', Object.keys(otpResponse.data));
+
+    const { signature, uin, fullName } = otpResponse.data;
+    if (!signature || !uin) {
+      throw new Error('Missing signature or uin in OTP response');
+    }
+
+    const pdfPayload = { uin, signature };
+    console.log('📦 Preparing job with payload keys:', Object.keys(pdfPayload));
+
+    // Enqueue job with logging
+    console.log('⏳ Adding job to queue...');
+    let job;
     try {
-      const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
-        otp: text,
-        uniqueId: state.id,
-        verificationMethod: "FCN"
-      }, { headers: authHeader });
-
-      console.log('OTP response:', otpResponse.data);
-
-      const { signature, uin, fullName } = otpResponse.data;
-      if (!signature || !uin) {
-        throw new Error('Missing signature or uin in OTP response');
-      }
-
-      const pdfPayload = { uin, signature };
-
-      // Enqueue job
-      await pdfQueue.add({
+      job = await pdfQueue.add({
         chatId: ctx.chat.id,
         userId: ctx.from.id.toString(),
         authHeader,
@@ -278,24 +282,33 @@ bot.on('text', async (ctx) => {
         id: state.id,
         fullName: fullName || { eng: 'Fayda_Card' }
       });
-
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        status.message_id,
-        null,
-        "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
-      );
-
-      ctx.session = null; // clear session
-    } catch (e) {
-      console.error("OTP Error:", e.response?.data || e.message);
-      ctx.reply(`❌ Failed: ${e.message}`);
-      ctx.session = null;
+      console.log(`✅ Job added with ID: ${job.id}`);
+    } catch (queueError) {
+      console.error('❌ Failed to add job to queue:', queueError);
+      throw queueError; // let outer catch handle user message
     }
-    return;
-  }
-});
 
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      status.message_id,
+      null,
+      "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
+    );
+    console.log('✏️ Status message updated.');
+
+    ctx.session = null; // clear session
+    console.log('🧹 Session cleared.');
+  } catch (e) {
+    console.error("❌ OTP Step Error:", {
+      message: e.message,
+      stack: e.stack,
+      response: e.response?.data
+    });
+    ctx.reply(`❌ Failed: ${e.message}`);
+    ctx.session = null;
+  }
+  return;
+}
 // ---------- Admin Dashboard Routes (enhanced) ----------
 const requireAuth = (req, res, next) => {
   if (!req.session.admin) return res.redirect('/login');
