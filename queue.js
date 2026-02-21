@@ -12,26 +12,30 @@ if (!process.env.REDIS_URL) {
 
 console.log('🔍 REDIS_URL (first 30 chars):', process.env.REDIS_URL.substring(0, 30) + '...');
 
-// Create the Bull queue directly with the Upstash URL
+// ---------- Create Bull Queue ----------
 const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
   defaultJobOptions: {
-    attempts: 3,
-    backoff: 5000,
+    attempts: 3,           // retry 3 times on failure
+    backoff: { type: 'exponential', delay: 5000 }, // exponential backoff
     removeOnComplete: true,
     removeOnFail: false
   }
 });
 
+// ---------- Queue Event Listeners ----------
 pdfQueue.on('error', (err) => console.error('❌ Bull queue error:', err.message));
 pdfQueue.on('ready', () => console.log('✅ Redis connection ready'));
+pdfQueue.on('waiting', (jobId) => console.log(`⏳ Job ${jobId} is waiting in queue`));
+pdfQueue.on('active', (job) => console.log(`🚀 Processing job ${job.id} for user ${job.data.userId}`));
+pdfQueue.on('completed', (job) => console.log(`✅ Job ${job.id} completed successfully`));
 pdfQueue.on('failed', (job, err) => console.error(`❌ Job ${job.id} failed:`, err.message));
 
-// Worker: processes jobs concurrently
+// ---------- Queue Worker ----------
 pdfQueue.process(5, async (job) => {
-  console.log(`🚀 Processing job ${job.id} for user ${job.data.userId}`);
   const { chatId, userId, authHeader, pdfPayload, fullName } = job.data;
 
   try {
+    // Call API to generate PDF
     const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
       headers: authHeader,
       responseType: 'text',
@@ -39,6 +43,8 @@ pdfQueue.process(5, async (job) => {
     });
 
     let base64Pdf = pdfResponse.data.trim();
+
+    // Handle JSON wrapper if returned
     if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
       try {
         const parsed = JSON.parse(base64Pdf);
@@ -52,13 +58,19 @@ pdfQueue.process(5, async (job) => {
     const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `${safeName}.pdf`;
 
+    // Send PDF via Telegram
     await bot.telegram.sendDocument(chatId, { source: pdfBuffer, filename }, { caption: "✨ Your Digital ID is ready!" });
-    await User.updateOne({ telegramId: userId }, { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } });
+
+    // Update user stats
+    await User.updateOne(
+      { telegramId: userId },
+      { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
+    );
 
     return { success: true };
   } catch (err) {
     console.error(`❌ Job failed for user ${userId}:`, err.message);
-    throw err;
+    throw err; // Bull will handle retries
   }
 });
 
