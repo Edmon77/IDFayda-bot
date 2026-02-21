@@ -470,6 +470,24 @@ app.get('/export-users', requireAuth, async (req, res) => {
 
 app.get('/health', (req, res) => res.send('OK'));
 
+app.get('/test-redis', requireAuth, async (req, res) => {
+  try {
+    const Redis = require('ioredis');
+    const redis = new Redis(process.env.REDIS_URL, {
+      connectTimeout: 10000,
+      lazyConnect: true,
+      tls: {}, // force TLS
+      retryStrategy: null // disable retries for this test
+    });
+    await redis.connect();
+    const pong = await redis.ping();
+    await redis.quit();
+    res.send(`✅ Redis ping: ${pong}`);
+  } catch (err) {
+    res.status(500).send(`❌ Redis error: ${err.message}\n${err.stack}`);
+  }
+});
+
 // ---------- Start Server with Webhook ----------
 async function startServer() {
   try {
