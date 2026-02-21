@@ -6,8 +6,7 @@ const axios = require('axios');
 const Captcha = require('2captcha');
 const mongoose = require('mongoose');
 
-const bot = require('./bot');
-const pdfQueue = require('./queue');
+const bot = require('./bot'); // your separate bot instance
 const User = require('./models/User');
 const auth = require('./middleware/auth');
 
@@ -40,7 +39,7 @@ const HEADERS = {
 };
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
 
-// ---------- Authorization Middleware (unchanged) ----------
+// ---------- Authorization Middleware ----------
 bot.use(async (ctx, next) => {
   const telegramId = ctx.from.id.toString();
   const user = await auth.getUser(telegramId);
@@ -263,28 +262,61 @@ bot.on('text', async (ctx) => {
         throw new Error('Missing signature or uin in OTP response');
       }
 
-      const pdfPayload = { uin, signature };
+      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Fetching ID file...");
 
-      // Enqueue job
-      await pdfQueue.add({
-        chatId: ctx.chat.id,
-        userId: ctx.from.id.toString(),
-        authHeader,
-        pdfPayload,
-        id: state.id,
-        fullName: fullName || { eng: 'Fayda_Card' }
+      const pdfPayload = { uin, signature };
+      const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
+        headers: authHeader,
+        responseType: 'text'
       });
 
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        status.message_id,
-        null,
-        "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
+      let base64Pdf = pdfResponse.data.trim();
+      // If response is JSON with a pdf field, extract it
+      if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
+        try {
+          const parsed = JSON.parse(base64Pdf);
+          if (parsed.pdf) {
+            base64Pdf = parsed.pdf.trim();
+          }
+        } catch (e) {
+          // Not valid JSON, keep original
+        }
+      }
+
+      console.log('Base64 PDF length:', base64Pdf.length);
+      console.log('First 50 chars:', base64Pdf.substring(0, 50));
+
+      // Verify base64 header
+      if (!base64Pdf.startsWith('JVBERi0')) {
+        console.error('Base64 does not start with PDF header!');
+      }
+
+      const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+      console.log('PDF buffer length:', pdfBuffer.length);
+
+      const pdfHeader = pdfBuffer.slice(0, 4).toString();
+      if (pdfHeader !== '%PDF') {
+        console.error('Decoded PDF header mismatch:', pdfHeader);
+      }
+
+      // Generate filename from fullName (sanitize)
+      const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
+      const filename = `${safeName}.pdf`;
+
+      await ctx.replyWithDocument({
+        source: pdfBuffer,
+        filename: filename
+      }, { caption: "✨ Your Digital ID is ready!" });
+
+      // Increment download count for the user
+      await User.updateOne(
+        { telegramId: ctx.from.id.toString() },
+        { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
       );
 
-      ctx.session = null; // clear session
+      ctx.session = null;
     } catch (e) {
-      console.error("OTP Error:", e.response?.data || e.message);
+      console.error("OTP/PDF Error:", e.response?.data || e.message);
       ctx.reply(`❌ Failed: ${e.message}`);
       ctx.session = null;
     }
@@ -452,7 +484,6 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🤖 Webhook active at ${process.env.WEBHOOK_DOMAIN}${webhookPath}`);
-      console.log(`✅ Queue worker started with concurrency 5`);
     });
   } catch (err) {
     console.error("❌ Failed to start server:", err);
