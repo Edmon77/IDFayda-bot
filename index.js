@@ -236,10 +236,14 @@ bot.on('text', async (ctx) => {
 
       await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "✅ Captcha Solved!\n\nEnter the OTP sent to your phone:");
     } catch (e) {
-      const errMsg = e.response?.data?.message || "Verification failed.";
-      console.error("ID Error:", errMsg);
-      ctx.reply(`❌ Error: ${errMsg}\nTry /start again.`);
-      ctx.session = null;
+      console.error("Full verify error:", {
+    status: e.response?.status,
+    data: e.response?.data,
+    message: e.message
+  });
+  const errMsg = e.response?.data?.message || "Verification failed.";
+  ctx.reply(`❌ Error: ${errMsg}\nTry /start again.`);
+  ctx.session = null;
     }
     return;
   }
