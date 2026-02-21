@@ -616,8 +616,15 @@ bot.on('text', async (ctx) => {
 
     // ----- Download Flow: OTP Step -----
     if (state.step === 'OTP') {
+      // Prevent duplicate processing
+      if (state.processingOTP) {
+        return; // Already processing, ignore duplicate
+      }
+      state.processingOTP = true;
+
       const validation = validateOTP(text);
       if (!validation.valid) {
+        state.processingOTP = false;
         return ctx.reply(`❌ ${validation.error}. Please enter a valid OTP.`);
       }
 
@@ -639,37 +646,103 @@ bot.on('text', async (ctx) => {
           throw new Error('Missing signature or uin in OTP response');
         }
 
-        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Queueing PDF generation...");
+        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Processing PDF...");
 
-        // Add job to queue for async processing
-        await pdfQueue.add({
-          chatId: ctx.chat.id,
-          userId: ctx.from.id.toString(),
-          authHeader,
-          pdfPayload: { uin, signature },
-          fullName
-        }, {
-          priority: 1,
-          timeout: 60000 // 60 second timeout for job
-        });
+        try {
+          // Add job to queue for async processing
+          const job = await pdfQueue.add({
+            chatId: ctx.chat.id,
+            userId: ctx.from.id.toString(),
+            authHeader,
+            pdfPayload: { uin, signature },
+            fullName
+          }, {
+            priority: 1,
+            timeout: 60000 // 60 second timeout for job
+          });
 
-        ctx.session = null;
+          logger.info(`PDF job ${job.id} queued for user ${ctx.from.id.toString()}`);
 
-        // Show main menu
-        const user = ctx.state.user;
-        const menu = getMainMenu(user.role);
-        await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n🏠 **Main Menu**\nChoose an option:', {
-          parse_mode: 'Markdown',
-          ...menu
-        });
+          ctx.session = null;
+
+          // Show main menu
+          const user = ctx.state.user;
+          const menu = getMainMenu(user.role);
+          await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n🏠 **Main Menu**\nChoose an option:', {
+            parse_mode: 'Markdown',
+            ...menu
+          });
+        } catch (queueError) {
+          logger.error('Failed to queue PDF job, processing synchronously:', queueError);
+          // Fallback: try to process synchronously if queue fails
+          await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Processing PDF directly...");
+          
+          try {
+            const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, { uin, signature }, {
+              headers: authHeader,
+              responseType: 'text',
+              timeout: 30000
+            });
+
+            let base64Pdf = pdfResponse.data.trim();
+            if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
+              try {
+                const parsed = JSON.parse(base64Pdf);
+                if (parsed.pdf) base64Pdf = parsed.pdf.trim();
+              } catch (e) {}
+            }
+
+            if (!base64Pdf.startsWith('JVBERi0')) {
+              throw new Error('Invalid PDF response');
+            }
+
+            const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+            const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
+            const filename = `${safeName}.pdf`;
+
+            await ctx.replyWithDocument({
+              source: pdfBuffer,
+              filename: filename
+            }, { caption: "✨ Your Digital ID is ready!" });
+
+            await User.updateOne(
+              { telegramId: ctx.from.id.toString() },
+              { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
+            );
+
+            ctx.session = null;
+            const user = ctx.state.user;
+            const menu = getMainMenu(user.role);
+            await ctx.reply('🏠 **Main Menu**\nChoose an option:', {
+              parse_mode: 'Markdown',
+              ...menu
+            });
+          } catch (syncError) {
+            logger.error('Synchronous PDF processing failed:', {
+              error: syncError.message,
+              stack: syncError.stack,
+              response: syncError.response?.data
+            });
+            throw syncError;
+          }
+        }
       } catch (e) {
         logger.error("OTP/PDF Error:", {
           error: e.message,
           stack: e.stack,
           response: e.response?.data
         });
-        ctx.reply(`❌ Failed: ${e.response?.data?.message || e.message}`);
+        try {
+          await ctx.reply(`❌ Failed: ${e.response?.data?.message || e.message || 'Unknown error. Please try again.'}`);
+        } catch (replyError) {
+          logger.error('Failed to send error message:', replyError);
+        }
         ctx.session = null;
+      } finally {
+        // Always clear processing flag
+        if (state) {
+          state.processingOTP = false;
+        }
       }
       return;
     }
