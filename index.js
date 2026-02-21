@@ -127,9 +127,11 @@ bot.use(async (ctx, next) => {
     const telegramId = ctx.from.id.toString();
     
     // Check user rate limit
-    const rateLimit = checkUserRateLimit(telegramId, 30, 60000); // 30 requests per minute
+    const rateLimit = await checkUserRateLimit(telegramId, 30, 60000); // 30 requests per minute
     if (!rateLimit.allowed) {
-      const waitTime = Math.ceil((rateLimit.resetTime - Date.now()) / 1000);
+      const waitTime = rateLimit.resetTime 
+        ? Math.ceil((rateLimit.resetTime - Date.now()) / 1000)
+        : 60; // Default to 60 seconds if resetTime is invalid
       return ctx.reply(`⏳ Too many requests. Please wait ${waitTime} seconds.`);
     }
     
