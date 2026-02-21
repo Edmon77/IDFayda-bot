@@ -1,92 +1,75 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Admin Dashboard</title>
+    <title>Manage Buyer</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; }
-        .header { background: #1a73e8; color: white; padding: 20px; }
-        .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-align: center; }
-        .stat-card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
-        .stat-card .number { font-size: 32px; font-weight: bold; color: #1a73e8; }
-        .buyers-table { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; padding: 10px; background: #f8f9fa; }
-        td { padding: 10px; border-bottom: 1px solid #eee; }
-        .btn { padding: 5px 10px; background: #1a73e8; color: white; text-decoration: none; border-radius: 5px; font-size: 12px; }
-        .expiring { color: orange; font-weight: bold; }
-        .expired { color: red; font-weight: bold; }
+        body { font-family: Arial; background: #f0f2f5; padding: 20px; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #1a73e8; }
+        .info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .info p { margin: 5px 0; }
+        .sub-list { margin-top: 20px; }
+        .sub-item { background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
+        .btn { padding: 5px 10px; background: #1a73e8; color: white; text-decoration: none; border-radius: 5px; font-size: 12px; border: none; cursor: pointer; }
+        .btn-danger { background: #dc3545; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 5px; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>📊 Fayda Bot Admin Dashboard</h1>
-    </div>
-    
     <div class="container">
-        <div class="stats">
-            <div class="stat-card">
-                <h3>Total Users</h3>
-                <div class="number"><%= stats.totalUsers %></div>
-            </div>
-            <div class="stat-card">
-                <h3>Buyers</h3>
-                <div class="number"><%= stats.buyers %></div>
-            </div>
-            <div class="stat-card">
-                <h3>Sub-Users</h3>
-                <div class="number"><%= stats.subUsers %></div>
-            </div>
-            <div class="stat-card">
-                <h3>Expiring Soon</h3>
-                <div class="number"><%= stats.expiringSoon %></div>
-            </div>
-            <!-- NEW STAT CARD -->
-            <div class="stat-card">
-                <h3>Total Downloads</h3>
-                <div class="number"><%= stats.totalDownloads %></div>
-            </div>
+        <a href="/dashboard" style="color: #1a73e8;">← Back to Dashboard</a>
+        <h1>Manage Buyer</h1>
+        
+        <div class="info">
+            <p><strong>Telegram ID:</strong> <%= buyer.telegramId %></p>
+            <p><strong>Name:</strong> <%= buyer.firstName || 'N/A' %> <%= buyer.lastName || '' %></p>
+            <p><strong>Username:</strong> @<%= buyer.telegramUsername || 'N/A' %></p>
+            <p><strong>Expiry Date:</strong> <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : 'N/A' %></p>
+            <p><strong>Sub-Users:</strong> <%= buyer.subUsers ? buyer.subUsers.length : 0 %>/9</p>
+        </div>
+
+        <!-- NEW DOWNLOAD SUMMARY SECTION -->
+        <h2>Download Summary</h2>
+        <div class="info">
+            <p><strong>Your Own PDFs:</strong> <%= buyerOwn %></p>
+            <p><strong>Your Users:</strong> <%= subs.length %></p>
+            <p><strong>Users' PDFs:</strong> <%= subUsersTotal %></p>
+            <p><strong>Total PDFs:</strong> <%= totalDownloads %></p>
         </div>
         
-        <div class="buyers-table">
-            <h2>Buyers List</h2>
-            <a href="/export-users" class="btn" style="float: right; margin-bottom: 10px;">📥 Export CSV</a>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Telegram ID</th>
-                        <th>Name</th>
-                        <th>Own PDFs</th>
-                        <th>Sub PDFs</th>
-                        <th>Total</th>
-                        <th>Sub-Users</th>
-                        <th>Expiry Date</th>
-                        <th>Last Active</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <% buyers.forEach(b => { %>
-                        <tr>
-                            <td><%= b.telegramId %></td>
-                            <td><%= b.firstName || 'N/A' %> <%= b.lastName || '' %></td>
-                            <td><%= b.downloadCount || 0 %></td>
-                            <td><%= b.subDownloads %></td>
-                            <td><%= b.totalDownloads %></td>
-                            <td><%= b.subUsers ? b.subUsers.length : 0 %>/9</td>
-                            <td class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
-                                <%= b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : 'N/A' %>
-                            </td>
-                            <td><%= b.lastActive ? new Date(b.lastActive).toLocaleDateString() : 'Never' %></td>
-                            <td>
-                                <a href="/buyer/<%= b.telegramId %>" class="btn">Manage</a>
-                            </td>
-                        </tr>
-                    <% }) %>
-                </tbody>
-            </table>
+        <h2>Add Sub-User</h2>
+        <form method="POST" action="/buyer/<%= buyer.telegramId %>/add-sub">
+            <div class="form-group">
+                <label>Identifier (Telegram ID, @username, or phone)</label>
+                <input type="text" name="identifier" required>
+            </div>
+            <div class="form-group">
+                <label>Expiry (days)</label>
+                <input type="number" name="expiryDays" value="30" required>
+            </div>
+            <button type="submit" class="btn">Add Sub-User</button>
+        </form>
+        
+        <div class="sub-list">
+            <h2>Current Sub-Users</h2>
+            <% if (subs.length === 0) { %>
+                <p>No sub-users yet.</p>
+            <% } %>
+            <% subs.forEach(sub => { %>
+                <div class="sub-item">
+                    <span>
+                        <strong><%= sub.firstName || sub.telegramUsername || sub.telegramId %></strong> 
+                        (PDFs: <%= sub.downloadCount || 0 %>)<br>
+                        ID: <%= sub.telegramId %><br>
+                        Expiry: <%= sub.expiryDate ? new Date(sub.expiryDate).toLocaleDateString() : 'N/A' %>
+                    </span>
+                    <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove-sub/<%= sub.telegramId %>" style="display: inline;">
+                        <button type="submit" class="btn btn-danger">Remove</button>
+                    </form>
+                </div>
+            <% }) %>
         </div>
     </div>
 </body>
