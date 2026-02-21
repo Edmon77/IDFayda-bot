@@ -4,7 +4,8 @@
   "description": "Telegram bot for Fayda ID with subscription management",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "worker": "node worker.js"
   },
   "dependencies": {
     "2captcha": "^3.0.6",
