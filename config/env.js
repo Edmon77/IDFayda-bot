@@ -20,8 +20,15 @@ function validateEnv() {
   }
 
   if (missing.length > 0) {
+    const msg = [
+      `Missing required environment variables: ${missing.join(', ')}.`,
+      'Add them in your deployment platform:',
+      '  Railway: Project → Variables tab',
+      '  Render: Dashboard → Your Service → Environment',
+      '  See ENV_SETUP.md for step-by-step instructions.'
+    ].join('\n');
     logger.error(`Missing required environment variables: ${missing.join(', ')}`);
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    throw new Error(msg);
   }
 
   // Validate formats

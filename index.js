@@ -84,16 +84,40 @@ function getMainMenu(role) {
 
 // ---------- Error Handler Middleware ----------
 bot.catch((err, ctx) => {
+  // Ignore common Telegram errors that don't need action
+  const ignorableErrors = [
+    'bot was blocked by the user',
+    'chat not found',
+    'user is deactivated',
+    'bot was kicked from the group',
+    'message to delete not found',
+    'message is not modified'
+  ];
+  
+  const isIgnorable = ignorableErrors.some(msg => err.message?.toLowerCase().includes(msg.toLowerCase()));
+  
+  if (isIgnorable) {
+    // Log but don't try to send message (user blocked bot or chat doesn't exist)
+    logger.warn(`Ignoring Telegram error: ${err.message}`);
+    return;
+  }
+  
+  // Log other errors
   logger.error('Bot error:', {
     error: err.message,
     stack: err.stack,
     update: ctx.update
   });
   
-  try {
-    ctx.reply('❌ An error occurred. Please try again later or contact support.');
-  } catch (e) {
-    logger.error('Failed to send error message:', e);
+  // Try to send error message only if we have a valid context and chat
+  if (ctx && ctx.chat && ctx.from) {
+    try {
+      ctx.reply('❌ An error occurred. Please try again later or contact support.').catch(() => {
+        // Silently ignore if we can't send (user blocked, etc.)
+      });
+    } catch (e) {
+      // Silently ignore errors sending error messages
+    }
   }
 });
 
@@ -679,13 +703,25 @@ async function startServer() {
 
     // Set webhook
     const webhookPath = '/webhook';
-    await bot.telegram.setWebhook(`${process.env.WEBHOOK_DOMAIN}${webhookPath}`);
+    // Ensure WEBHOOK_DOMAIN has https:// prefix
+    let webhookDomain = process.env.WEBHOOK_DOMAIN || '';
+    if (webhookDomain && !webhookDomain.startsWith('http')) {
+      webhookDomain = `https://${webhookDomain}`;
+      logger.warn(`⚠️ WEBHOOK_DOMAIN missing protocol, added https://`);
+    }
+    const webhookUrl = `${webhookDomain}${webhookPath}`;
+    await bot.telegram.setWebhook(webhookUrl);
     app.use(bot.webhookCallback(webhookPath));
+
+    // Warn if WEBHOOK_DOMAIN looks like a placeholder
+    if (/your-app-name|example\.com|localhost/.test(process.env.WEBHOOK_DOMAIN || '')) {
+      logger.warn('⚠️ WEBHOOK_DOMAIN looks like a placeholder. Update it in your deployment Variables to your real URL (e.g. https://fayda-bot.onrender.com) or the bot will not receive messages.');
+    }
 
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT}`);
-      logger.info(`🤖 Webhook active at ${process.env.WEBHOOK_DOMAIN}${webhookPath}`);
+      logger.info(`🤖 Webhook active at ${webhookUrl}`);
     });
   } catch (err) {
     logger.error("❌ Failed to start server:", err);
