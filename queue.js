@@ -1,42 +1,53 @@
 require('dotenv').config();
 const Queue = require('bull');
 
-const redisOptions = {
-  maxRetriesPerRequest: null
-};
-
-// Detect Upstash TLS automatically
-if (process.env.REDIS_URL && process.env.REDIS_URL.startsWith('rediss://')) {
-  redisOptions.tls = {};
+if (!process.env.REDIS_URL) {
+  console.error('❌ REDIS_URL is not set');
+  process.exit(1);
 }
 
-const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
-  redis: redisOptions,
+console.log('🔍 REDIS_URL (first 30 chars):', process.env.REDIS_URL.substring(0, 30) + '...');
 
+// Redis options for Bull (with IPv4 and TLS)
+const redisOptions = {
+  redis: {
+    url: process.env.REDIS_URL,
+    tls: process.env.REDIS_URL.startsWith('rediss://') ? {} : undefined,
+    connectTimeout: 20000,
+    family: 4, // force IPv4
+    retryStrategy: (times) => {
+      console.log(`🔄 Redis retry attempt #${times}`);
+      if (times > 10) {
+        console.error('❌ Redis: Max retries reached');
+        return null;
+      }
+      return Math.min(times * 2000, 30000);
+    }
+  },
   defaultJobOptions: {
     attempts: 3,
-
-    backoff: {
-      type: 'exponential',
-      delay: 5000
-    },
-
+    backoff: { type: 'exponential', delay: 5000 },
     removeOnComplete: true,
     removeOnFail: false
   }
-});
+};
 
-// Logging
+const pdfQueue = new Queue('pdf generation', redisOptions);
+
 pdfQueue.on('error', (err) => {
-  console.error('❌ Redis error:', err.message);
+  console.error('❌ Bull queue error:', err.message);
 });
 
-pdfQueue.on('failed', (job, err) => {
-  console.error('❌ Job failed:', job?.id, err.message);
+pdfQueue.on('ready', () => {
+  console.log('✅ Redis connection ready');
 });
 
-pdfQueue.on('completed', (job) => {
-  console.log('✅ Job completed:', job?.id);
+pdfQueue.on('reconnecting', () => {
+  console.log('🔄 Redis reconnecting...');
+});
+
+pdfQueue.on('close', () => {
+  console.log('🔴 Redis connection closed');
 });
 
 module.exports = pdfQueue;
