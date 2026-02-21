@@ -1,3 +1,4 @@
+// fayda-bot/queue.js
 const Queue = require('bull');
 const axios = require('axios');
 const bot = require('./bot');
@@ -12,26 +13,16 @@ if (!process.env.REDIS_URL) {
 
 console.log('🔍 REDIS_URL (first 30 chars):', process.env.REDIS_URL.substring(0, 30) + '...');
 
+// ----- Bull + Upstash compatible options -----
 const redisOptions = {
   redis: {
     url: process.env.REDIS_URL,
-    connectTimeout: 20000,           // 20 seconds
-    commandTimeout: 10000,            // 10 seconds
-    keepAlive: 10000,                 // send keep-alive every 10s
-    retryStrategy: (times) => {
-      console.log(`🔄 Redis retry attempt #${times}`);
-      if (times > 10) {
-        console.error('❌ Redis: Max retries reached. Giving up.');
-        return null; // stop retrying
-      }
-      const delay = Math.min(times * 2000, 30000); // exponential backoff up to 30s
-      return delay;
-    },
-    maxRetriesPerRequest: null,       // let Bull handle retries
-    enableReadyCheck: true,
-    lazyConnect: true,                 // don't connect immediately
-    tls: {},                           // force TLS
-    family: 4                           // force IPv4
+    lazyConnect: true,        // only connect when needed
+    enableReadyCheck: false,  // must be false for serverless Redis
+    maxRetriesPerRequest: null,
+    tls: {},                  // force TLS if rediss://
+    connectTimeout: 20000,
+    family: 4
   },
   defaultJobOptions: {
     attempts: 3,
@@ -41,6 +32,7 @@ const redisOptions = {
   }
 };
 
+// ----- Create the Bull queue -----
 let pdfQueue;
 try {
   pdfQueue = new Queue('pdf generation', redisOptions);
@@ -50,24 +42,13 @@ try {
   process.exit(1);
 }
 
-// Monitor Redis connection events
-pdfQueue.on('error', (err) => {
-  console.error('❌ Bull queue error:', err.message);
-});
+// ----- Redis connection monitoring -----
+pdfQueue.on('error', (err) => console.error('❌ Bull queue error:', err.message));
+pdfQueue.on('ready', () => console.log('✅ Redis connection ready'));
+pdfQueue.on('reconnecting', () => console.log('🔄 Redis reconnecting...'));
+pdfQueue.on('close', () => console.log('🔴 Redis connection closed'));
 
-pdfQueue.on('ready', () => {
-  console.log('✅ Redis connection ready');
-});
-
-pdfQueue.on('reconnecting', () => {
-  console.log('🔄 Redis reconnecting...');
-});
-
-pdfQueue.on('close', () => {
-  console.log('🔴 Redis connection closed');
-});
-
-// Verify that pdfQueue.add is available
+// ----- Verify add method -----
 if (typeof pdfQueue.add !== 'function') {
   console.error('❌ pdfQueue.add is not a function! pdfQueue =', pdfQueue);
   process.exit(1);
@@ -75,12 +56,13 @@ if (typeof pdfQueue.add !== 'function') {
   console.log('✅ pdfQueue.add is available');
 }
 
-// Worker: processes jobs concurrently
+// ----- Worker: process jobs -----
 pdfQueue.process(5, async (job) => {
   console.log(`🚀 Processing job ${job.id} for user ${job.data.userId}`);
   const { chatId, userId, authHeader, pdfPayload, id, fullName } = job.data;
 
   try {
+    // Generate PDF from API
     const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
       headers: authHeader,
       responseType: 'text',
@@ -105,7 +87,7 @@ pdfQueue.process(5, async (job) => {
 
     await bot.telegram.sendDocument(chatId, {
       source: pdfBuffer,
-      filename: filename
+      filename
     }, { caption: "✨ Your Digital ID is ready!" });
 
     await User.updateOne(
