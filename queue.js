@@ -1,101 +1,71 @@
-const { Queue, Worker, QueueScheduler } = require('bullmq');
-const Redis = require('ioredis');
+const Queue = require('bull');
 const axios = require('axios');
 const bot = require('./bot');
 const User = require('./models/User');
 
 const API_BASE = "https://api-resident.fayda.et";
 
-if (!process.env.REDIS_URL) {
-  console.error('❌ REDIS_URL is not set in environment variables!');
-  process.exit(1);
-}
-
-// Redis connection with IPv4 and TLS
-const connection = new Redis(process.env.REDIS_URL, {
-  tls: {},               // required for rediss://
-  connectTimeout: 20000,
-  enableReadyCheck: false,
-  family: 4               // force IPv4
-});
-
-connection.on('error', (err) => {
-  console.error('❌ Redis connection error:', err.message);
-});
-
-connection.on('ready', () => {
-  console.log('✅ Redis connection ready');
-});
-
-connection.on('reconnecting', () => {
-  console.log('🔄 Redis reconnecting...');
-});
-
-connection.on('close', () => {
-  console.log('🔴 Redis connection closed');
-});
-
-// QueueScheduler handles retries, delayed jobs, etc.
-new QueueScheduler('pdf generation', { connection });
-
-// Create the BullMQ queue
-const pdfQueue = new Queue('pdf generation', {
-  connection,
+const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
   defaultJobOptions: {
     attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
+    backoff: 5000,
     removeOnComplete: true,
     removeOnFail: false
   }
 });
 
-console.log('✅ BullMQ queue created');
-
-// Worker to process PDF jobs
-const worker = new Worker('pdf generation', async (job) => {
-  const { chatId, userId, authHeader, pdfPayload, fullName } = job.data;
-  console.log(`🚀 Processing job ${job.id} for user ${userId}`);
+// Worker: processes jobs concurrently (adjust concurrency based on your CPU)
+pdfQueue.process(5, async (job) => {
+  const { chatId, userId, authHeader, pdfPayload, id, fullName } = job.data;
 
   try {
+    // 1. Fetch PDF from Fayda
     const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
       headers: authHeader,
-      responseType: 'text',
-      timeout: 20000
+      responseType: 'text'
     });
 
     let base64Pdf = pdfResponse.data.trim();
+    // If response is JSON with a pdf field, extract it
     if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
       try {
         const parsed = JSON.parse(base64Pdf);
         if (parsed.pdf) base64Pdf = parsed.pdf.trim();
-      } catch {}
+      } catch (e) {
+        // ignore, keep original
+      }
     }
 
-    if (!base64Pdf.startsWith('JVBERi0')) throw new Error('Invalid PDF header');
+    // Validate base64 header
+    if (!base64Pdf.startsWith('JVBERi0')) {
+      throw new Error('Invalid PDF header');
+    }
 
+    // 2. Convert to buffer
     const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+
+    // 3. Generate filename from fullName (sanitize)
     const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `${safeName}.pdf`;
 
+    // 4. Send PDF via Telegram
     await bot.telegram.sendDocument(chatId, {
       source: pdfBuffer,
-      filename
+      filename: filename
     }, { caption: "✨ Your Digital ID is ready!" });
 
+    // 5. Increment download count for the user
     await User.updateOne(
       { telegramId: userId },
       { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
     );
 
     return { success: true };
-  } catch (err) {
-    console.error(`❌ Job failed for user ${userId}:`, err.message);
-    throw err;
+  } catch (error) {
+    console.error(`Job failed for user ${userId}:`, error.message);
+    // Rethrow so Bull retries
+    throw error;
   }
-}, { connection, concurrency: 5 });
-
-worker.on('error', (err) => console.error('❌ BullMQ Worker error:', err));
-
-console.log('✅ BullMQ Worker started with concurrency 5');
+});
 
 module.exports = pdfQueue;
