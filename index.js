@@ -170,51 +170,52 @@ bot.action(/remove_sub_(.+)/, async (ctx) => {
   await ctx.editMessageText(`✅ Successfully removed employee.`);
   ctx.answerCbQuery();
 });
-
-// ---------- SINGLE TEXT HANDLER ----------
-bot.on('text', async (ctx) => {
-  const state = ctx.session;
-  if (!state) return;
+// ---------- SINGLE MESSAGE HANDLER (TEXT ONLY) ----------
+bot.on('message', async (ctx) => {
+  // Only handle text messages
+  if (!ctx.message || !('text' in ctx.message)) return;
 
   const text = ctx.message.text.trim();
+  const state = ctx.session;
+  if (!state) return;
 
   // ----- Step: AWAITING_SUB_IDENTIFIER -----
   if (state.step === 'AWAITING_SUB_IDENTIFIER') {
     const buyer = ctx.state.user;
     const statusMsg = await ctx.reply('🔍 Looking up user...');
-    
+
     try {
       let subUser = await auth.findUserByIdentifier(text);
-      
+
       if (!subUser) {
         return ctx.reply(
           "⚠️ This user hasn't started the bot yet.\n\n" +
           "Ask them to send /start to the bot first, then try adding them again with their Telegram ID."
         );
       }
-      
+
       if ((buyer.subUsers || []).length >= 9) {
         return ctx.reply('❌ You already have 9 employees.');
       }
       if ((buyer.subUsers || []).includes(subUser.telegramId)) {
         return ctx.reply('❌ This user is already your employee.');
       }
-      
+
       buyer.subUsers.push(subUser.telegramId);
       await buyer.save();
-      
+
       subUser.role = 'sub';
       subUser.addedBy = buyer.telegramId;
       subUser.expiryDate = buyer.expiryDate;
       await subUser.save();
-      
+
       await ctx.telegram.editMessageText(
         ctx.chat.id,
         statusMsg.message_id,
         null,
         `✅ Employee added successfully!\n\nThey can now use the bot.`
       );
-      
+
       ctx.session.step = null;
     } catch (error) {
       console.error('Add sub error:', error);
@@ -242,7 +243,12 @@ bot.on('text', async (ctx) => {
       ctx.session.id = text;
       ctx.session.step = 'OTP';
 
-      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "✅ Captcha Solved!\n\nEnter the OTP sent to your phone:");
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        status.message_id,
+        null,
+        "✅ Captcha Solved!\n\nEnter the OTP sent to your phone:"
+      );
     } catch (e) {
       console.error("Full verify error:", {
         status: e.response?.status,
@@ -255,50 +261,52 @@ bot.on('text', async (ctx) => {
     }
     return;
   }
-// ----- Step: OTP -----
-if (state.step === 'OTP') {
-  const status = await ctx.reply("⏳ Verifying OTP and generating document...");
-  const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
-  try {
-    const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
-      otp: text,
-      uniqueId: state.id,
-      verificationMethod: "FCN"
-    }, { headers: authHeader });
+  // ----- Step: OTP -----
+  if (state.step === 'OTP') {
+    const status = await ctx.reply("⏳ Verifying OTP and generating document...");
+    const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
-    const { signature, uin, fullName } = otpResponse.data;
-    if (!signature || !uin) throw new Error('Missing signature or uin in OTP response');
+    try {
+      const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
+        otp: text,
+        uniqueId: state.id,
+        verificationMethod: "FCN"
+      }, { headers: authHeader });
 
-    const pdfPayload = { uin, signature };
-    console.log('📦 Preparing job with payload keys:', Object.keys(pdfPayload));
+      const { signature, uin, fullName } = otpResponse.data;
+      if (!signature || !uin) throw new Error('Missing signature or uin in OTP response');
 
-    // Enqueue the job in BullMQ
-    const job = await pdfQueue.add('generate-pdf', {
-      chatId: ctx.chat.id,
-      userId: ctx.from.id.toString(),
-      authHeader,
-      pdfPayload,
-      fullName: fullName || { eng: 'Fayda_Card' }
-    });
+      const pdfPayload = { uin, signature };
+      console.log('📦 Preparing job with payload keys:', Object.keys(pdfPayload));
 
-    console.log(`✅ Job added with ID: ${job.id}`);
+      // Enqueue the job in BullMQ
+      const job = await pdfQueue.add('generate-pdf', {
+        chatId: ctx.chat.id,
+        userId: ctx.from.id.toString(),
+        authHeader,
+        pdfPayload,
+        fullName: fullName || { eng: 'Fayda_Card' }
+      });
 
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      status.message_id,
-      null,
-      "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
-    );
+      console.log(`✅ Job added with ID: ${job.id}`);
 
-    ctx.session = null; // clear session
-  } catch (e) {
-    console.error("❌ OTP Step Error:", e.message);
-    ctx.reply(`❌ Failed: ${e.message}`);
-    ctx.session = null;
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        status.message_id,
+        null,
+        "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
+      );
+
+      ctx.session = null; // clear session
+    } catch (e) {
+      console.error("❌ OTP Step Error:", e.message);
+      ctx.reply(`❌ Failed: ${e.message}`);
+      ctx.session = null;
+    }
+    return;
   }
-  return;
-}
+});
 
 // ---------- Admin Dashboard Routes ----------
 const requireAuth = (req, res, next) => {
