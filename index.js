@@ -255,72 +255,50 @@ bot.on('text', async (ctx) => {
     }
     return;
   }
+// ----- Step: OTP -----
+if (state.step === 'OTP') {
+  const status = await ctx.reply("⏳ Verifying OTP and generating document...");
+  const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
-  // ----- Step: OTP -----
-  if (state.step === 'OTP') {
-    const status = await ctx.reply("⏳ Verifying OTP and generating document...");
-    const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
+  try {
+    const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
+      otp: text,
+      uniqueId: state.id,
+      verificationMethod: "FCN"
+    }, { headers: authHeader });
 
-    try {
-      const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
-        otp: text,
-        uniqueId: state.id,
-        verificationMethod: "FCN"
-      }, { headers: authHeader });
+    const { signature, uin, fullName } = otpResponse.data;
+    if (!signature || !uin) throw new Error('Missing signature or uin in OTP response');
 
-      console.log('✅ OTP validation successful. Response data keys:', Object.keys(otpResponse.data));
+    const pdfPayload = { uin, signature };
+    console.log('📦 Preparing job with payload keys:', Object.keys(pdfPayload));
 
-      const { signature, uin, fullName } = otpResponse.data;
-      if (!signature || !uin) {
-        throw new Error('Missing signature or uin in OTP response');
-      }
+    // Enqueue the job in BullMQ
+    const job = await pdfQueue.add('generate-pdf', {
+      chatId: ctx.chat.id,
+      userId: ctx.from.id.toString(),
+      authHeader,
+      pdfPayload,
+      fullName: fullName || { eng: 'Fayda_Card' }
+    });
 
-      const pdfPayload = { uin, signature };
-      console.log('📦 Preparing job with payload keys:', Object.keys(pdfPayload));
+    console.log(`✅ Job added with ID: ${job.id}`);
 
-      // Enqueue job with a timeout (15 seconds)
-      console.log('⏳ Adding job to queue...');
-      try {
-        const job = await withTimeout(
-          pdfQueue.add({
-            chatId: ctx.chat.id,
-            userId: ctx.from.id.toString(),
-            authHeader,
-            pdfPayload,
-            id: state.id,
-            fullName: fullName || { eng: 'Fayda_Card' }
-          }),
-          15000,
-          'Queue add timed out'
-        );
-        console.log(`✅ Job added with ID: ${job.id}`);
-      } catch (queueError) {
-        console.error('❌ Failed to add job to queue:', queueError);
-        throw new Error('PDF generation service temporarily unavailable. Please try again later.');
-      }
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      status.message_id,
+      null,
+      "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
+    );
 
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        status.message_id,
-        null,
-        "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
-      );
-      console.log('✏️ Status message updated.');
-
-      ctx.session = null; // clear session
-      console.log('🧹 Session cleared.');
-    } catch (e) {
-      console.error("❌ OTP Step Error:", {
-        message: e.message,
-        stack: e.stack,
-        response: e.response?.data
-      });
-      ctx.reply(`❌ Failed: ${e.message}`);
-      ctx.session = null;
-    }
-    return;
+    ctx.session = null; // clear session
+  } catch (e) {
+    console.error("❌ OTP Step Error:", e.message);
+    ctx.reply(`❌ Failed: ${e.message}`);
+    ctx.session = null;
   }
-});
+  return;
+}
 
 // ---------- Admin Dashboard Routes ----------
 const requireAuth = (req, res, next) => {

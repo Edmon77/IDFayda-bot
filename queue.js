@@ -1,4 +1,6 @@
-const Queue = require('bull');
+// queue.js
+const { Queue, Worker, QueueScheduler } = require('bullmq');
+const Redis = require('ioredis');
 const axios = require('axios');
 const bot = require('./bot');
 const User = require('./models/User');
@@ -10,32 +12,35 @@ if (!process.env.REDIS_URL) {
   process.exit(1);
 }
 
-console.log('🔍 REDIS_URL (first 30 chars):', process.env.REDIS_URL.substring(0, 30) + '...');
+// Redis connection
+const connection = new Redis(process.env.REDIS_URL, {
+  tls: {},          // required for rediss://
+  connectTimeout: 20000,
+  enableReadyCheck: false
+});
 
-// ---------- Create Bull Queue ----------
-const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
+// QueueScheduler handles retries, delayed jobs, etc.
+new QueueScheduler('pdf generation', { connection });
+
+// Create the BullMQ queue
+const pdfQueue = new Queue('pdf generation', {
+  connection,
   defaultJobOptions: {
-    attempts: 3,           // retry 3 times on failure
-    backoff: { type: 'exponential', delay: 5000 }, // exponential backoff
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5000 },
     removeOnComplete: true,
     removeOnFail: false
   }
 });
 
-// ---------- Queue Event Listeners ----------
-pdfQueue.on('error', (err) => console.error('❌ Bull queue error:', err.message));
-pdfQueue.on('ready', () => console.log('✅ Redis connection ready'));
-pdfQueue.on('waiting', (jobId) => console.log(`⏳ Job ${jobId} is waiting in queue`));
-pdfQueue.on('active', (job) => console.log(`🚀 Processing job ${job.id} for user ${job.data.userId}`));
-pdfQueue.on('completed', (job) => console.log(`✅ Job ${job.id} completed successfully`));
-pdfQueue.on('failed', (job, err) => console.error(`❌ Job ${job.id} failed:`, err.message));
+console.log('✅ BullMQ queue created');
 
-// ---------- Queue Worker ----------
-pdfQueue.process(5, async (job) => {
+// Worker to process PDF jobs
+const worker = new Worker('pdf generation', async (job) => {
   const { chatId, userId, authHeader, pdfPayload, fullName } = job.data;
+  console.log(`🚀 Processing job ${job.id} for user ${userId}`);
 
   try {
-    // Call API to generate PDF
     const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
       headers: authHeader,
       responseType: 'text',
@@ -43,8 +48,6 @@ pdfQueue.process(5, async (job) => {
     });
 
     let base64Pdf = pdfResponse.data.trim();
-
-    // Handle JSON wrapper if returned
     if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
       try {
         const parsed = JSON.parse(base64Pdf);
@@ -58,10 +61,8 @@ pdfQueue.process(5, async (job) => {
     const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
     const filename = `${safeName}.pdf`;
 
-    // Send PDF via Telegram
     await bot.telegram.sendDocument(chatId, { source: pdfBuffer, filename }, { caption: "✨ Your Digital ID is ready!" });
 
-    // Update user stats
     await User.updateOne(
       { telegramId: userId },
       { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
@@ -70,10 +71,12 @@ pdfQueue.process(5, async (job) => {
     return { success: true };
   } catch (err) {
     console.error(`❌ Job failed for user ${userId}:`, err.message);
-    throw err; // Bull will handle retries
+    throw err;
   }
-});
+}, { connection, concurrency: 5 });
 
-console.log('✅ Queue worker started with concurrency 5');
+worker.on('error', (err) => console.error('❌ BullMQ Worker error:', err));
+
+console.log('✅ BullMQ Worker started with concurrency 5');
 
 module.exports = pdfQueue;
