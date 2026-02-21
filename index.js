@@ -1,10 +1,13 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const { Telegraf, session: telegrafSession } = require('telegraf');
+const MongoStore = require('connect-mongo');
 const axios = require('axios');
 const Captcha = require('2captcha');
 const mongoose = require('mongoose');
+
+const bot = require('./bot');
+const pdfQueue = require('./queue');
 const User = require('./models/User');
 const auth = require('./middleware/auth');
 
@@ -15,7 +18,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }),
+  cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
 }));
 app.set('view engine', 'ejs');
 
@@ -24,23 +29,18 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB error:', err));
 
-// ---------- Telegram Bot Setup ----------
-const bot = new Telegraf(process.env.BOT_TOKEN);
-bot.use(telegrafSession());
-
-const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
-
+// ---------- Constants ----------
 const API_BASE = "https://api-resident.fayda.et";
 const SITE_KEY = "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
-
 const HEADERS = {
   'Content-Type': 'application/json',
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
   'Origin': 'https://resident.fayda.et',
   'Referer': 'https://resident.fayda.et/'
 };
+const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
 
-// ---------- Authorization Middleware ----------
+// ---------- Authorization Middleware (unchanged) ----------
 bot.use(async (ctx, next) => {
   const telegramId = ctx.from.id.toString();
   const user = await auth.getUser(telegramId);
@@ -170,7 +170,7 @@ bot.on('text', async (ctx) => {
 
   const text = ctx.message.text.trim();
 
-  // ----- Step: AWAITING_SUB_IDENTIFIER -----
+  // ----- Step: AWAITING_SUB_IDENTIFIER (adding sub-user) -----
   if (state.step === 'AWAITING_SUB_IDENTIFIER') {
     const buyer = ctx.state.user;
     const statusMsg = await ctx.reply('🔍 Looking up user...');
@@ -215,7 +215,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // ----- Step: ID -----
+  // ----- Step: ID (Fayda login) -----
   if (state.step === 'ID') {
     if (!/^\d{16}$/.test(text)) {
       return ctx.reply("❌ Invalid format. Please enter exactly **16 digits**.", { parse_mode: 'Markdown' });
@@ -258,57 +258,33 @@ bot.on('text', async (ctx) => {
 
       console.log('OTP response:', otpResponse.data);
 
-      const { signature, uin } = otpResponse.data;
+      const { signature, uin, fullName } = otpResponse.data;
       if (!signature || !uin) {
         throw new Error('Missing signature or uin in OTP response');
       }
 
-      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Fetching ID file...");
-
       const pdfPayload = { uin, signature };
-      const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
-        headers: authHeader,
-        responseType: 'text'
+
+      // Enqueue job
+      await pdfQueue.add({
+        chatId: ctx.chat.id,
+        userId: ctx.from.id.toString(),
+        authHeader,
+        pdfPayload,
+        id: state.id,
+        fullName: fullName || { eng: 'Fayda_Card' }
       });
 
-      let base64Pdf = pdfResponse.data.trim();
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        status.message_id,
+        null,
+        "⏳ OTP Verified. Your PDF is being prepared. We'll send it shortly."
+      );
 
-      // If the response looks like JSON, try to extract the pdf field
-      if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
-        try {
-          const parsed = JSON.parse(base64Pdf);
-          if (parsed.pdf) {
-            base64Pdf = parsed.pdf.trim();
-          }
-        } catch (e) {
-          // Not valid JSON, keep original
-        }
-      }
-
-      console.log('Base64 PDF length:', base64Pdf.length);
-      console.log('First 50 chars:', base64Pdf.substring(0, 50));
-
-      // Verify base64 header
-      if (!base64Pdf.startsWith('JVBERi0')) {
-        console.error('Base64 does not start with PDF header!');
-      }
-
-      const pdfBuffer = Buffer.from(base64Pdf, 'base64');
-      console.log('PDF buffer length:', pdfBuffer.length);
-
-      const pdfHeader = pdfBuffer.slice(0, 4).toString();
-      if (pdfHeader !== '%PDF') {
-        console.error('Decoded PDF header mismatch:', pdfHeader);
-      }
-
-      await ctx.replyWithDocument({
-        source: pdfBuffer,
-        filename: `Fayda_Card_${state.id}.pdf`
-      }, { caption: "✨ Your Digital ID is ready!" });
-
-      ctx.session = null;
+      ctx.session = null; // clear session
     } catch (e) {
-      console.error("OTP/PDF Error:", e.response?.data || e.message);
+      console.error("OTP Error:", e.response?.data || e.message);
       ctx.reply(`❌ Failed: ${e.message}`);
       ctx.session = null;
     }
@@ -316,7 +292,7 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// ---------- Admin Dashboard Routes ----------
+// ---------- Admin Dashboard Routes (enhanced) ----------
 const requireAuth = (req, res, next) => {
   if (!req.session.admin) return res.redirect('/login');
   next();
@@ -337,16 +313,33 @@ app.post('/login', (req, res) => {
 });
 
 app.get('/dashboard', requireAuth, async (req, res) => {
+  const totalDownloads = await User.aggregate([
+    { $group: { _id: null, total: { $sum: "$downloadCount" } } }
+  ]).then(r => r[0]?.total || 0);
+
   const stats = {
     totalUsers: await User.countDocuments(),
     buyers: await User.countDocuments({ role: 'buyer' }),
     subUsers: await User.countDocuments({ role: 'sub' }),
     expiringSoon: await User.countDocuments({
       expiryDate: { $lt: new Date(Date.now() + 7*24*60*60*1000), $gt: new Date() }
-    })
+    }),
+    totalDownloads
   };
+
   const buyers = await User.find({ role: 'buyer' }).sort({ createdAt: -1 });
-  res.render('dashboard', { stats, buyers });
+  // Enhance each buyer with sub-user download totals
+  const buyerList = await Promise.all(buyers.map(async (buyer) => {
+    const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } });
+    const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
+    return {
+      ...buyer.toObject(),
+      subDownloads,
+      totalDownloads: (buyer.downloadCount || 0) + subDownloads
+    };
+  }));
+
+  res.render('dashboard', { stats, buyers: buyerList });
 });
 
 app.post('/add-buyer', requireAuth, async (req, res) => {
@@ -378,7 +371,17 @@ app.get('/buyer/:id', requireAuth, async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.status(404).send('Buyer not found');
   const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } });
-  res.render('buyer-detail', { buyer, subs });
+  const subUsersTotal = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
+  const buyerOwn = buyer.downloadCount || 0;
+  const totalDownloads = buyerOwn + subUsersTotal;
+
+  res.render('buyer-detail', {
+    buyer,
+    subs,
+    buyerOwn,
+    subUsersTotal,
+    totalDownloads
+  });
 });
 
 app.post('/buyer/:id/add-sub', requireAuth, async (req, res) => {
@@ -427,9 +430,9 @@ app.post('/buyer/:buyerId/remove-sub/:subId', requireAuth, async (req, res) => {
 
 app.get('/export-users', requireAuth, async (req, res) => {
   const users = await User.find({});
-  let csv = 'Telegram ID,Role,Added By,Expiry Date,Last Active,Usage Count\n';
+  let csv = 'Telegram ID,Role,Added By,Expiry Date,Last Active,Usage Count,Download Count\n';
   users.forEach(u => {
-    csv += `${u.telegramId},${u.role},${u.addedBy || 'N/A'},${u.expiryDate || 'N/A'},${u.lastActive || 'N/A'},${u.usageCount}\n`;
+    csv += `${u.telegramId},${u.role},${u.addedBy || 'N/A'},${u.expiryDate || 'N/A'},${u.lastActive || 'N/A'},${u.usageCount},${u.downloadCount}\n`;
   });
   res.header('Content-Type', 'text/csv');
   res.attachment('users.csv');
@@ -438,6 +441,7 @@ app.get('/export-users', requireAuth, async (req, res) => {
 
 app.get('/health', (req, res) => res.send('OK'));
 
+// ---------- Start Server with Webhook ----------
 async function startServer() {
   try {
     const webhookPath = '/webhook';
@@ -448,6 +452,7 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🤖 Webhook active at ${process.env.WEBHOOK_DOMAIN}${webhookPath}`);
+      console.log(`✅ Queue worker started with concurrency 5`);
     });
   } catch (err) {
     console.error("❌ Failed to start server:", err);

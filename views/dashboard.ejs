@@ -43,6 +43,11 @@
                 <h3>Expiring Soon</h3>
                 <div class="number"><%= stats.expiringSoon %></div>
             </div>
+            <!-- NEW STAT CARD -->
+            <div class="stat-card">
+                <h3>Total Downloads</h3>
+                <div class="number"><%= stats.totalDownloads %></div>
+            </div>
         </div>
         
         <div class="buyers-table">
@@ -53,6 +58,9 @@
                     <tr>
                         <th>Telegram ID</th>
                         <th>Name</th>
+                        <th>Own PDFs</th>
+                        <th>Sub PDFs</th>
+                        <th>Total</th>
                         <th>Sub-Users</th>
                         <th>Expiry Date</th>
                         <th>Last Active</th>
@@ -60,17 +68,20 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <% buyers.forEach(buyer => { %>
+                    <% buyers.forEach(b => { %>
                         <tr>
-                            <td><%= buyer.telegramId %></td>
-                            <td><%= buyer.firstName || 'N/A' %> <%= buyer.lastName || '' %></td>
-                            <td><%= buyer.subUsers ? buyer.subUsers.length : 0 %>/9</td>
-                            <td class="<%= new Date(buyer.expiryDate) < new Date() ? 'expired' : (new Date(buyer.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
-                                <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : 'N/A' %>
+                            <td><%= b.telegramId %></td>
+                            <td><%= b.firstName || 'N/A' %> <%= b.lastName || '' %></td>
+                            <td><%= b.downloadCount || 0 %></td>
+                            <td><%= b.subDownloads %></td>
+                            <td><%= b.totalDownloads %></td>
+                            <td><%= b.subUsers ? b.subUsers.length : 0 %>/9</td>
+                            <td class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
+                                <%= b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : 'N/A' %>
                             </td>
-                            <td><%= buyer.lastActive ? new Date(buyer.lastActive).toLocaleDateString() : 'Never' %></td>
+                            <td><%= b.lastActive ? new Date(b.lastActive).toLocaleDateString() : 'Never' %></td>
                             <td>
-                                <a href="/buyer/<%= buyer.telegramId %>" class="btn">Manage</a>
+                                <a href="/buyer/<%= b.telegramId %>" class="btn">Manage</a>
                             </td>
                         </tr>
                     <% }) %>

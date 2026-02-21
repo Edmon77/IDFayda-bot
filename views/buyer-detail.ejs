@@ -29,6 +29,15 @@
             <p><strong>Expiry Date:</strong> <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : 'N/A' %></p>
             <p><strong>Sub-Users:</strong> <%= buyer.subUsers ? buyer.subUsers.length : 0 %>/9</p>
         </div>
+
+        <!-- NEW DOWNLOAD SUMMARY SECTION -->
+        <h2>Download Summary</h2>
+        <div class="info">
+            <p><strong>Your Own PDFs:</strong> <%= buyerOwn %></p>
+            <p><strong>Your Users:</strong> <%= subs.length %></p>
+            <p><strong>Users' PDFs:</strong> <%= subUsersTotal %></p>
+            <p><strong>Total PDFs:</strong> <%= totalDownloads %></p>
+        </div>
         
         <h2>Add Sub-User</h2>
         <form method="POST" action="/buyer/<%= buyer.telegramId %>/add-sub">
@@ -51,7 +60,8 @@
             <% subs.forEach(sub => { %>
                 <div class="sub-item">
                     <span>
-                        <strong><%= sub.firstName || sub.telegramUsername || sub.telegramId %></strong><br>
+                        <strong><%= sub.firstName || sub.telegramUsername || sub.telegramId %></strong> 
+                        (PDFs: <%= sub.downloadCount || 0 %>)<br>
                         ID: <%= sub.telegramId %><br>
                         Expiry: <%= sub.expiryDate ? new Date(sub.expiryDate).toLocaleDateString() : 'N/A' %>
                     </span>

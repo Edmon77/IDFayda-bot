@@ -12,7 +12,9 @@ const userSchema = new mongoose.Schema({
   subUsers: [{ type: String }], // for buyers only
   createdAt: { type: Date, default: Date.now },
   lastActive: { type: Date },
-  usageCount: { type: Number, default: 0 }
+  usageCount: { type: Number, default: 0 },
+  downloadCount: { type: Number, default: 0 },
+  lastDownload: { type: Date }
 });
 
 module.exports = mongoose.model('User', userSchema);
