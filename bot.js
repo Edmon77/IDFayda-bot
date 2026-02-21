@@ -1,58 +1,7 @@
-const mongoose = require('mongoose');
+require('dotenv').config();
+const { Telegraf, session } = require('telegraf');
 
-const userSchema = new mongoose.Schema({
-  telegramId: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true
-  },
+const bot = new Telegraf(process.env.BOT_TOKEN);
+bot.use(session());
 
-  telegramUsername: {
-    type: String,
-    sparse: true
-  },
-
-  phoneNumber: {
-    type: String,
-    sparse: true
-  },
-
-  firstName: String,
-  lastName: String,
-
-  role: {
-    type: String,
-    enum: ['buyer', 'sub', 'admin'],
-    default: 'sub'
-  },
-
-  addedBy: String,
-
-  expiryDate: Date,
-
-  subUsers: [{
-    type: String
-  }],
-
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-
-  lastActive: Date,
-
-  usageCount: {
-    type: Number,
-    default: 0
-  },
-
-  downloadCount: {
-    type: Number,
-    default: 0
-  },
-
-  lastDownload: Date
-});
-
-module.exports = mongoose.model('User', userSchema);
+module.exports = bot;
