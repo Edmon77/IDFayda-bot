@@ -1,53 +1,71 @@
-require('dotenv').config();
 const Queue = require('bull');
+const axios = require('axios');
+const bot = require('./bot');
+const User = require('./models/User');
 
-if (!process.env.REDIS_URL) {
-  console.error('❌ REDIS_URL is not set');
-  process.exit(1);
-}
+const API_BASE = "https://api-resident.fayda.et";
 
-console.log('🔍 REDIS_URL (first 30 chars):', process.env.REDIS_URL.substring(0, 30) + '...');
-
-// Redis options for Bull (with IPv4 and TLS)
-const redisOptions = {
-  redis: {
-    url: process.env.REDIS_URL,
-    tls: process.env.REDIS_URL.startsWith('rediss://') ? {} : undefined,
-    connectTimeout: 20000,
-    family: 4, // force IPv4
-    retryStrategy: (times) => {
-      console.log(`🔄 Redis retry attempt #${times}`);
-      if (times > 10) {
-        console.error('❌ Redis: Max retries reached');
-        return null;
-      }
-      return Math.min(times * 2000, 30000);
-    }
-  },
+const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
   defaultJobOptions: {
     attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
+    backoff: 5000,
     removeOnComplete: true,
     removeOnFail: false
   }
-};
-
-const pdfQueue = new Queue('pdf generation', redisOptions);
-
-pdfQueue.on('error', (err) => {
-  console.error('❌ Bull queue error:', err.message);
 });
 
-pdfQueue.on('ready', () => {
-  console.log('✅ Redis connection ready');
-});
+// Worker: processes jobs concurrently (adjust concurrency based on your CPU)
+pdfQueue.process(5, async (job) => {
+  const { chatId, userId, authHeader, pdfPayload, id, fullName } = job.data;
 
-pdfQueue.on('reconnecting', () => {
-  console.log('🔄 Redis reconnecting...');
-});
+  try {
+    // 1. Fetch PDF from Fayda
+    const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
+      headers: authHeader,
+      responseType: 'text'
+    });
 
-pdfQueue.on('close', () => {
-  console.log('🔴 Redis connection closed');
+    let base64Pdf = pdfResponse.data.trim();
+    // If response is JSON with a pdf field, extract it
+    if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
+      try {
+        const parsed = JSON.parse(base64Pdf);
+        if (parsed.pdf) base64Pdf = parsed.pdf.trim();
+      } catch (e) {
+        // ignore, keep original
+      }
+    }
+
+    // Validate base64 header
+    if (!base64Pdf.startsWith('JVBERi0')) {
+      throw new Error('Invalid PDF header');
+    }
+
+    // 2. Convert to buffer
+    const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+
+    // 3. Generate filename from fullName (sanitize)
+    const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${safeName}.pdf`;
+
+    // 4. Send PDF via Telegram
+    await bot.telegram.sendDocument(chatId, {
+      source: pdfBuffer,
+      filename: filename
+    }, { caption: "✨ Your Digital ID is ready!" });
+
+    // 5. Increment download count for the user
+    await User.updateOne(
+      { telegramId: userId },
+      { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
+    );
+
+    return { success: true };
+  } catch (error) {
+    console.error(`Job failed for user ${userId}:`, error.message);
+    // Rethrow so Bull retries
+    throw error;
+  }
 });
 
 module.exports = pdfQueue;
