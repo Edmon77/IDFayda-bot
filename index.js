@@ -49,32 +49,30 @@ const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
 bot.use(async (ctx, next) => {
   if (!ctx.from) return;
 
-  const telegramId = ctx.from.id.toString();
-  const user = await auth.getUser(telegramId);
+  try {
+    const telegramId = ctx.from.id.toString();
 
-  if (!user) {
-    return ctx.reply('❌ You are not authorized.\nContact admin.');
-  }
+    const user = await auth.getUser(telegramId);
 
-  if (
-    user.role !== 'admin' &&
-    user.expiryDate &&
-    new Date(user.expiryDate) < new Date()
-  ) {
-    return ctx.reply('❌ Your subscription has expired.');
-  }
-
-  ctx.state.user = user;
-
-  await User.updateOne(
-    { telegramId },
-    {
-      $set: { lastActive: new Date() },
-      $inc: { usageCount: 1 }
+    if (!user) {
+      return ctx.reply('❌ Unauthorized');
     }
-  );
 
-  return next();
+    ctx.state.user = user;
+
+    await User.updateOne(
+      { telegramId },
+      {
+        $set: { lastActive: new Date() },
+        $inc: { usageCount: 1 }
+      }
+    );
+
+    return next();
+
+  } catch (err) {
+    console.error("Auth middleware error:", err);
+  }
 });
 
 // ---------- TEXT HANDLER ----------
@@ -214,17 +212,18 @@ async function startServer() {
   try {
     const webhookPath = '/webhook';
 
-    await bot.telegram.setWebhook(
-      `${process.env.WEBHOOK_DOMAIN}${webhookPath}`
-    );
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${webhookPath}`;
 
+    await bot.telegram.setWebhook(webhookUrl);
+
+    // Register webhook middleware BEFORE listen
     app.use(bot.webhookCallback(webhookPath));
 
     const PORT = process.env.PORT || 3000;
 
     app.listen(PORT, () => {
       console.log(`🚀 API running on port ${PORT}`);
-      console.log(`🤖 Webhook active`);
+      console.log(`🤖 Webhook active at ${webhookUrl}`);
       console.log(`📦 Jobs are sent to Redis queue`);
     });
 
@@ -233,5 +232,4 @@ async function startServer() {
     process.exit(1);
   }
 }
-
 startServer();
