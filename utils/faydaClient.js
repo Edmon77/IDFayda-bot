@@ -1,0 +1,28 @@
+/**
+ * Shared HTTP client for Fayda API with keep-alive connections.
+ * Reusing TCP connections reduces latency when many concurrent requests run (e.g. 50+ downloads).
+ */
+const axios = require('axios');
+const http = require('http');
+const https = require('https');
+
+const API_BASE = 'https://api-resident.fayda.et';
+const HEADERS = {
+  'Content-Type': 'application/json',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Origin': 'https://resident.fayda.et',
+  'Referer': 'https://resident.fayda.et/'
+};
+
+const httpAgent = new http.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ keepAlive: true });
+
+const api = axios.create({
+  baseURL: API_BASE,
+  timeout: 35000,
+  httpAgent,
+  httpsAgent,
+  headers: HEADERS
+});
+
+module.exports = { api, API_BASE, HEADERS };

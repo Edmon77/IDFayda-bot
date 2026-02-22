@@ -1,11 +1,14 @@
 const Queue = require('bull');
-const axios = require('axios');
 const bot = require('./bot');
 const User = require('./models/User');
 const logger = require('./utils/logger');
+const { safeResponseForLog } = require('./utils/logger');
 const { sanitizeFilename } = require('./utils/validators');
-
-const API_BASE = "https://api-resident.fayda.et";
+const { parsePdfResponse } = require('./utils/pdfHelper');
+const fayda = require('./utils/faydaClient');
+const PDF_FETCH_ATTEMPTS = 3;
+const PDF_FETCH_RETRY_DELAY_MS = 2000;
+const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_CONCURRENCY, 10) || 10, 1), 50);
 
 // Create Redis connection for Bull queue
 const Redis = require('ioredis');
@@ -41,55 +44,69 @@ pdfQueue.on('completed', (job) => {
   logger.info(`PDF job completed for user ${job.data.userId}`);
 });
 
-pdfQueue.on('failed', (job, err) => {
+pdfQueue.on('failed', async (job, err) => {
   logger.error(`PDF job failed for user ${job.data.userId}:`, err.message);
+  // Notify user so they know to try again
+  try {
+    const chatId = job?.data?.chatId;
+    if (chatId) {
+      await bot.telegram.sendMessage(
+        chatId,
+        '❌ We couldn\'t generate your PDF after several attempts. Please try again from the start (/start).'
+      );
+    }
+  } catch (notifyErr) {
+    logger.error('Failed to notify user of PDF job failure:', notifyErr.message);
+  }
 });
 
 pdfQueue.on('stalled', (job) => {
   logger.warn(`PDF job stalled for user ${job.data.userId}`);
 });
 
-// Worker: processes jobs concurrently (10 concurrent jobs for better throughput)
-pdfQueue.process(10, async (job) => {
+logger.info(`PDF queue worker started with concurrency ${PDF_QUEUE_CONCURRENCY}`);
+
+// Worker: processes jobs concurrently (configurable for 100–300 users; default 10)
+pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
   const { chatId, userId, authHeader, pdfPayload, fullName } = job.data;
 
   try {
-    // 1. Fetch PDF from Fayda with timeout
-    const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, pdfPayload, {
-      headers: authHeader,
-      responseType: 'text',
-      timeout: 30000 // 30 second timeout
-    });
-
-    let base64Pdf = pdfResponse.data.trim();
-    // If response is JSON with a pdf field, extract it
-    if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
+    // 1. Fetch PDF from Fayda with retries for transient failures
+    let pdfResponse;
+    let lastError;
+    for (let attempt = 1; attempt <= PDF_FETCH_ATTEMPTS; attempt++) {
       try {
-        const parsed = JSON.parse(base64Pdf);
-        if (parsed.pdf) base64Pdf = parsed.pdf.trim();
-      } catch (e) {
-        logger.warn('Failed to parse JSON response, using raw data');
+        pdfResponse = await fayda.api.post('/printableCredentialRoute', pdfPayload, {
+          headers: authHeader,
+          responseType: 'text',
+          timeout: 30000
+        });
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        const isRetryable = !err.response || (err.response.status >= 500 && err.response.status < 600) || err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET';
+        if (attempt < PDF_FETCH_ATTEMPTS && isRetryable) {
+          logger.warn(`PDF fetch attempt ${attempt} failed for user ${userId}, retrying in ${PDF_FETCH_RETRY_DELAY_MS}ms:`, err.message);
+          await new Promise(r => setTimeout(r, PDF_FETCH_RETRY_DELAY_MS));
+        } else {
+          throw lastError;
+        }
       }
     }
 
-    // Validate base64 header
-    if (!base64Pdf.startsWith('JVBERi0')) {
-      throw new Error('Invalid PDF header - response is not a valid PDF');
-    }
+    const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
 
-    // 2. Convert to buffer
-    const pdfBuffer = Buffer.from(base64Pdf, 'base64');
-
-    // 3. Generate filename from fullName (sanitize)
+    // 2. Generate filename from fullName (sanitize)
     const filename = `${sanitizeFilename(fullName?.eng)}.pdf`;
 
-    // 4. Send PDF via Telegram
+    // 3. Send PDF via Telegram
     await bot.telegram.sendDocument(chatId, {
       source: pdfBuffer,
       filename: filename
     }, { caption: "✨ Your Digital ID is ready!" });
 
-    // 5. Increment download count for the user
+    // 4. Increment download count for the user
     await User.updateOne(
       { telegramId: userId },
       { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
@@ -101,7 +118,8 @@ pdfQueue.process(10, async (job) => {
     logger.error(`Job failed for user ${userId}:`, {
       message: error.message,
       stack: error.stack,
-      response: error.response?.data
+      status: error.response?.status,
+      response: safeResponseForLog(error.response?.data)
     });
     // Rethrow so Bull retries
     throw error;

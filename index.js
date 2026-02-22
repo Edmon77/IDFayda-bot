@@ -2,21 +2,38 @@
 const { validateEnv } = require('./config/env');
 validateEnv();
 
+// ---------- Keep process alive on unhandled errors (log and continue) ----------
+const logger = require('./utils/logger');
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at', { reason, stack: reason?.stack });
+});
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception', { message: err.message, stack: err.stack });
+  // Don't exit - allow bot to keep serving other users (exit only on next fatal)
+  // process.exit(1);
+});
+
 const express = require('express');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const axios = require('axios');
 const Captcha = require('2captcha');
+const fayda = require('./utils/faydaClient');
 const { Markup } = require('telegraf');
 
 const bot = require('./bot');
 const User = require('./models/User');
 const auth = require('./middleware/auth');
-const logger = require('./utils/logger');
 const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
 const { validateFaydaId, validateOTP } = require('./utils/validators');
+const { parsePdfResponse } = require('./utils/pdfHelper');
 const pdfQueue = require('./queue');
+const { safeResponseForLog } = require('./utils/logger');
+
+const PDF_SYNC_ATTEMPTS = 2;
+const PDF_SYNC_RETRY_DELAY_MS = 1500;
+const CAPTCHA_VERIFY_ATTEMPTS = 3;
+const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
 
 // ---------- Express App ----------
 const app = express();
@@ -38,7 +55,7 @@ app.use(session({
 }));
 app.set('view engine', 'ejs');
 
-// Health check endpoint
+// Health check endpoint (simple – for load balancers)
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -47,19 +64,42 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Deep health (MongoDB + Redis) – for monitoring / zero-failure setups
+const { redisClient } = require('./utils/rateLimiter');
+app.get('/health/ready', async (req, res) => {
+  const mongodb = await (async () => {
+    try {
+      const mongoose = require('mongoose');
+      return mongoose.connection.readyState === 1 ? 'ok' : 'disconnected';
+    } catch (e) {
+      return 'error';
+    }
+  })();
+  let redis = 'ok';
+  try {
+    await redisClient.ping();
+  } catch (e) {
+    redis = 'error';
+  }
+  const ok = mongodb === 'ok' && redis === 'ok';
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    mongodb,
+    redis
+  });
+});
+
 // Apply rate limiting to API routes
 app.use('/api', apiLimiter);
 
 // ---------- Constants ----------
-const API_BASE = "https://api-resident.fayda.et";
+const API_BASE = fayda.API_BASE;
 const SITE_KEY = "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
-const HEADERS = {
-  'Content-Type': 'application/json',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-  'Origin': 'https://resident.fayda.et',
-  'Referer': 'https://resident.fayda.et/'
-};
+const HEADERS = fayda.HEADERS;
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
+const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
 
 // ---------- Helper: Generate main menu based on role ----------
 function getMainMenu(role) {
@@ -163,6 +203,7 @@ bot.use(async (ctx, next) => {
 // ---------- Start Command – Show Main Menu ----------
 bot.start(async (ctx) => {
   try {
+    ctx.session = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
     await ctx.reply('🏠 **Main Menu**\nChoose an option:', {
@@ -175,17 +216,36 @@ bot.start(async (ctx) => {
   }
 });
 
+// ---------- Cancel Command – Clear flow and return to Main Menu ----------
+bot.command('cancel', async (ctx) => {
+  try {
+    ctx.session = null;
+    const user = ctx.state.user;
+    const menu = getMainMenu(user.role);
+    await ctx.reply('❌ Cancelled. Back to **Main Menu**.', {
+      parse_mode: 'Markdown',
+      ...menu
+    });
+  } catch (error) {
+    logger.error('Cancel command error:', error);
+  }
+});
+
 // ---------- Download Action – Start Download Flow ----------
 bot.action('download', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     ctx.session = { step: 'ID' };
-    await ctx.editMessageText("🏁 Fayda ID Downloader\nPlease enter your **16-digit Fayda Number**:", {
-      parse_mode: 'Markdown'
+    const cancelBtn = Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Cancel', 'main_menu')]
+    ]);
+    await ctx.editMessageText("🏁 Fayda ID Downloader\nPlease enter your **16-digit Fayda Number**:\n\n_Or tap Cancel to return to menu._", {
+      parse_mode: 'Markdown',
+      ...cancelBtn
     });
   } catch (error) {
     logger.error('Download action error:', error);
-    ctx.reply('❌ Failed to start download. Please try again.');
+    ctx.reply('❌ Failed to start download. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -193,6 +253,7 @@ bot.action('download', async (ctx) => {
 bot.action('main_menu', async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    ctx.session = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
     await ctx.editMessageText('🏠 **Main Menu**\nChoose an option:', {
@@ -201,6 +262,9 @@ bot.action('main_menu', async (ctx) => {
     });
   } catch (error) {
     logger.error('Main menu action error:', error);
+    try {
+      ctx.reply('🏠 **Main Menu**\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
+    } catch (_) {}
   }
 });
 
@@ -243,7 +307,7 @@ bot.action('dashboard_super', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
   } catch (error) {
     logger.error('Dashboard super error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.');
+    ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -283,7 +347,7 @@ bot.action('dashboard_buyer', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
   } catch (error) {
     logger.error('Dashboard buyer error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.');
+    ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -311,7 +375,7 @@ bot.action('manage_users', async (ctx) => {
     });
   } catch (error) {
     logger.error('Manage users error:', error);
-    ctx.reply('❌ Failed to load users. Please try again.');
+    ctx.reply('❌ Failed to load users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -354,7 +418,7 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Select admin error:', error);
-    ctx.reply('❌ Failed to load user details. Please try again.');
+    ctx.reply('❌ Failed to load user details. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -368,12 +432,16 @@ bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
       step: 'AWAITING_SUB_IDENTIFIER',
       adminForAdd: adminId
     };
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Cancel', `cancel_add_sub_${adminId}`)]
+    ]);
     await ctx.editMessageText(
-      '📝 **Add a Sub‑User**\n\nPlease send me the Telegram **ID**, **Username** (with @), or **Phone Number** (with +) of the person you want to add.',
-      { parse_mode: 'Markdown' }
+      '📝 **Add a Sub‑User**\n\nPlease send me the Telegram **ID**, **Username** (with @), or **Phone Number** (with +) of the person you want to add.\n\n_Or tap Cancel to go back._',
+      { parse_mode: 'Markdown', ...keyboard }
     );
   } catch (error) {
     logger.error('Add sub admin error:', error);
+    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -407,7 +475,7 @@ bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Remove sub admin error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.');
+    ctx.reply('❌ Failed to load sub-users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -435,7 +503,7 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.');
+    ctx.reply('❌ Failed to remove sub-user. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -475,7 +543,7 @@ bot.action('manage_subs', async (ctx) => {
     });
   } catch (error) {
     logger.error('Manage subs error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.');
+    ctx.reply('❌ Failed to load sub-users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -484,12 +552,66 @@ bot.action('add_sub_self', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     ctx.session = { ...ctx.session, step: 'AWAITING_SUB_IDENTIFIER' };
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Cancel', 'cancel_add_sub')]
+    ]);
     await ctx.editMessageText(
-      '📝 **Add a Sub‑User**\n\nPlease send me the Telegram **ID**, **Username** (with @), or **Phone Number** (with +) of the person you want to add.',
-      { parse_mode: 'Markdown' }
+      '📝 **Add a Sub‑User**\n\nPlease send me the Telegram **ID**, **Username** (with @), or **Phone Number** (with +) of the person you want to add.\n\n_Or tap Cancel to go back._',
+      { parse_mode: 'Markdown', ...keyboard }
     );
   } catch (error) {
     logger.error('Add sub self error:', error);
+    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Cancel Add Sub (buyer: back to Main Menu; admin: back to that buyer) ----------
+bot.action('cancel_add_sub', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    ctx.session = null;
+    const user = ctx.state.user;
+    const menu = getMainMenu(user.role);
+    await ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.', {
+      parse_mode: 'Markdown',
+      ...menu
+    });
+  } catch (error) {
+    logger.error('Cancel add sub error:', error);
+  }
+});
+
+bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const adminId = ctx.match[1];
+    ctx.session = null;
+    const admin = await User.findOne({ telegramId: adminId }).lean();
+    if (!admin) {
+      const menu = getMainMenu(ctx.state.user?.role);
+      return ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.', { parse_mode: 'Markdown', ...menu });
+    }
+    const subs = await User.find({ telegramId: { $in: admin.subUsers || [] } })
+      .select('telegramId firstName telegramUsername downloadCount')
+      .lean()
+      .exec();
+    let text = `**Managing:** ${admin.firstName || 'N/A'} (@${admin.telegramUsername || 'N/A'})\n`;
+    text += `ID: \`${admin.telegramId}\`\n`;
+    text += `PDFs: ${admin.downloadCount || 0} | Users: ${subs.length}\n\n`;
+    text += `**Sub‑Users:**\n`;
+    subs.forEach((sub, i) => {
+      text += `${i+1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
+    });
+    const buttons = [
+      [Markup.button.callback('➕ Add Sub‑User', `add_sub_admin_${adminId}`)],
+      [Markup.button.callback('❌ Remove Sub‑User', `remove_sub_admin_${adminId}`)],
+      [Markup.button.callback('🔙 Back to Users', 'manage_users')],
+      [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+    ];
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
+  } catch (e) {
+    logger.error('Cancel add sub admin error:', e);
   }
 });
 
@@ -510,7 +632,7 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove my sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.');
+    ctx.reply('❌ Failed to remove sub-user. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
@@ -530,7 +652,8 @@ bot.on('text', async (ctx) => {
       const buyer = await User.findOne({ telegramId: buyerId });
       
       if (!buyer) {
-        return ctx.reply('❌ Buyer not found. Please try again.');
+        ctx.session = null;
+        return ctx.reply('❌ Buyer not found. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
       }
 
       const statusMsg = await ctx.reply('🔍 Looking up user...');
@@ -538,17 +661,24 @@ bot.on('text', async (ctx) => {
       try {
         let subUser = await auth.findUserByIdentifier(text);
         if (!subUser) {
+          ctx.session = null;
+          const menu = getMainMenu(ctx.state.user?.role);
           return ctx.reply(
             "⚠️ This user hasn't started the bot yet.\n\n" +
-            "Ask them to send /start to the bot first, then try adding them again with their Telegram ID."
+            "Ask them to send /start to the bot first, then try adding them again with their Telegram ID.",
+            { ...menu }
           );
         }
 
         if ((buyer.subUsers || []).length >= 9) {
-          return ctx.reply('❌ This buyer already has 9 employees.');
+          ctx.session = null;
+          const menu = getMainMenu(ctx.state.user?.role);
+          return ctx.reply('❌ This buyer already has 9 employees.', { ...menu });
         }
         if ((buyer.subUsers || []).includes(subUser.telegramId)) {
-          return ctx.reply('❌ This user is already an employee of this buyer.');
+          ctx.session = null;
+          const menu = getMainMenu(ctx.state.user?.role);
+          return ctx.reply('❌ This user is already an employee of this buyer.', { ...menu });
         }
 
         buyer.subUsers.push(subUser.telegramId);
@@ -575,7 +705,8 @@ bot.on('text', async (ctx) => {
         });
       } catch (error) {
         logger.error('Add sub error:', error);
-        ctx.reply('❌ Failed to add employee. Please try again.');
+        ctx.session = null;
+        ctx.reply('❌ Failed to add employee. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
       }
       return;
     }
@@ -589,25 +720,35 @@ bot.on('text', async (ctx) => {
 
       const status = await ctx.reply("⏳ Solving Captcha...");
       
-      try {
-        const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
-        const res = await axios.post(`${API_BASE}/verify`, {
-          idNumber: validation.value,
-          verificationMethod: "FCN",
-          captchaValue: result.data
-        }, { 
-          headers: HEADERS,
-          timeout: 30000
-        });
+      let verified = false;
+      let lastErr;
+      for (let attempt = 1; attempt <= CAPTCHA_VERIFY_ATTEMPTS && !verified; attempt++) {
+        try {
+          const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
+          const res = await fayda.api.post('/verify', {
+            idNumber: validation.value,
+            verificationMethod: "FCN",
+            captchaValue: result.data
+          }, { timeout: 35000 });
 
-        ctx.session.tempJwt = res.data.token;
-        ctx.session.id = validation.value;
-        ctx.session.step = 'OTP';
-
-        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "✅ Captcha Solved!\n\nEnter the OTP sent to your phone:");
-      } catch (e) {
-        const errMsg = e.response?.data?.message || e.message || "Verification failed.";
-        logger.error("ID verification error:", { error: errMsg, stack: e.stack });
+          ctx.session.tempJwt = res.data.token;
+          ctx.session.id = validation.value;
+          ctx.session.step = 'OTP';
+          verified = true;
+          await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "✅ Captcha Solved!\n\nEnter the OTP sent to your phone.\n_Send /cancel to return to menu._");
+        } catch (e) {
+          lastErr = e;
+          const errMsg = e.response?.data?.message || e.message || "Verification failed.";
+          logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed:`, errMsg);
+          if (attempt < CAPTCHA_VERIFY_ATTEMPTS) {
+            await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, `⏳ Captcha/verify failed, retrying (${attempt}/${CAPTCHA_VERIFY_ATTEMPTS})...`);
+            await new Promise(r => setTimeout(r, CAPTCHA_VERIFY_RETRY_DELAY_MS));
+          }
+        }
+      }
+      if (!verified) {
+        const errMsg = lastErr?.response?.data?.message || lastErr?.message || "Verification failed.";
+        logger.error("ID verification error after retries:", { error: errMsg, stack: lastErr?.stack });
         ctx.reply(`❌ Error: ${errMsg}\nTry /start again.`);
         ctx.session = null;
       }
@@ -631,72 +772,46 @@ bot.on('text', async (ctx) => {
       const status = await ctx.reply("⏳ Verifying OTP and generating document...");
       const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
-      try {
-        const otpResponse = await axios.post(`${API_BASE}/validateOtp`, {
-          otp: validation.value,
-          uniqueId: state.id,
-          verificationMethod: "FCN"
-        }, { 
-          headers: authHeader,
-          timeout: 30000
-        });
+      let otpResponse;
+      let otpAttempts = 2;
+      for (let attempt = 1; attempt <= otpAttempts; attempt++) {
+        try {
+          otpResponse = await fayda.api.post('/validateOtp', {
+            otp: validation.value,
+            uniqueId: state.id,
+            verificationMethod: "FCN"
+          }, {
+            headers: authHeader,
+            timeout: 35000
+          });
+          break;
+        } catch (e) {
+          const isRetryable = !e.response || (e.response.status >= 500 && e.response.status < 600) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
+          if (attempt === otpAttempts || !isRetryable) throw e;
+          logger.warn(`validateOtp attempt ${attempt} failed, retrying:`, e.message);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
 
+      try {
         const { signature, uin, fullName } = otpResponse.data;
         if (!signature || !uin) {
           throw new Error('Missing signature or uin in OTP response');
         }
 
-        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Processing PDF...");
+        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Fetching ID file...");
 
-        try {
-          // Add job to queue for async processing
-          const job = await pdfQueue.add({
-            chatId: ctx.chat.id,
-            userId: ctx.from.id.toString(),
-            authHeader,
-            pdfPayload: { uin, signature },
-            fullName
-          }, {
-            priority: 1,
-            timeout: 60000 // 60 second timeout for job
-          });
-
-          logger.info(`PDF job ${job.id} queued for user ${ctx.from.id.toString()}`);
-
-          ctx.session = null;
-
-          // Show main menu
-          const user = ctx.state.user;
-          const menu = getMainMenu(user.role);
-          await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n🏠 **Main Menu**\nChoose an option:', {
-            parse_mode: 'Markdown',
-            ...menu
-          });
-        } catch (queueError) {
-          logger.error('Failed to queue PDF job, processing synchronously:', queueError);
-          // Fallback: try to process synchronously if queue fails
-          await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Processing PDF directly...");
-          
+        // Under heavy load (PREFER_QUEUE_PDF=true) skip sync and always queue for controlled concurrency
+        let pdfSent = false;
+        if (!PREFER_QUEUE_PDF) {
+        for (let attempt = 1; attempt <= PDF_SYNC_ATTEMPTS && !pdfSent; attempt++) {
           try {
-            const pdfResponse = await axios.post(`${API_BASE}/printableCredentialRoute`, { uin, signature }, {
+            const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
               headers: authHeader,
               responseType: 'text',
-              timeout: 30000
+              timeout: 25000
             });
-
-            let base64Pdf = pdfResponse.data.trim();
-            if (base64Pdf.startsWith('{') && base64Pdf.includes('"pdf"')) {
-              try {
-                const parsed = JSON.parse(base64Pdf);
-                if (parsed.pdf) base64Pdf = parsed.pdf.trim();
-              } catch (e) {}
-            }
-
-            if (!base64Pdf.startsWith('JVBERi0')) {
-              throw new Error('Invalid PDF response');
-            }
-
-            const pdfBuffer = Buffer.from(base64Pdf, 'base64');
+            const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
             const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
             const filename = `${safeName}.pdf`;
 
@@ -709,28 +824,92 @@ bot.on('text', async (ctx) => {
               { telegramId: ctx.from.id.toString() },
               { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
             );
-
             ctx.session = null;
+            pdfSent = true;
+
             const user = ctx.state.user;
             const menu = getMainMenu(user.role);
             await ctx.reply('🏠 **Main Menu**\nChoose an option:', {
               parse_mode: 'Markdown',
               ...menu
             });
-          } catch (syncError) {
-            logger.error('Synchronous PDF processing failed:', {
-              error: syncError.message,
-              stack: syncError.stack,
-              response: syncError.response?.data
+          } catch (syncErr) {
+            lastSyncError = syncErr;
+            if (attempt < PDF_SYNC_ATTEMPTS) {
+              logger.warn(`Sync PDF attempt ${attempt} failed, retrying:`, syncErr.message);
+              await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Retrying PDF fetch...");
+              await new Promise(r => setTimeout(r, PDF_SYNC_RETRY_DELAY_MS));
+            }
+          }
+        }
+        }
+
+        if (pdfSent) {
+          // Done
+        } else {
+          // Sync failed (or PREFER_QUEUE_PDF) — enqueue for background retries
+          try {
+            const job = await pdfQueue.add({
+              chatId: ctx.chat.id,
+              userId: ctx.from.id.toString(),
+              authHeader,
+              pdfPayload: { uin, signature },
+              fullName
+            }, {
+              priority: 1,
+              timeout: 60000
             });
-            throw syncError;
+            logger.info(`PDF job ${job.id} queued (sync failed) for user ${ctx.from.id.toString()}`);
+          } catch (queueError) {
+            logger.error('Queue add failed, trying sync once more:', queueError);
+            await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Processing PDF directly...");
+            try {
+              const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
+                headers: authHeader,
+                responseType: 'text',
+                timeout: 25000
+              });
+              const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
+              const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
+              await ctx.replyWithDocument({
+                source: pdfBuffer,
+                filename: `${safeName}.pdf`
+              }, { caption: "✨ Your Digital ID is ready!" });
+              await User.updateOne(
+                { telegramId: ctx.from.id.toString() },
+                { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
+              );
+              ctx.session = null;
+              pdfSent = true;
+              const user = ctx.state.user;
+              const menu = getMainMenu(user.role);
+              await ctx.reply('🏠 **Main Menu**\nChoose an option:', { parse_mode: 'Markdown', ...menu });
+            } catch (syncError2) {
+              logger.error('Synchronous PDF processing failed:', {
+                error: syncError2.message,
+                response: safeResponseForLog(syncError2.response?.data)
+              });
+              await ctx.reply(`❌ Could not generate PDF: ${syncError2.response?.data?.message || syncError2.message}. Please try /start again.`);
+              ctx.session = null;
+            }
+          }
+
+          // Only show "queued" message if we didn't send PDF (queue was used)
+          if (!pdfSent) {
+            ctx.session = null;
+            const user = ctx.state.user;
+            const menu = getMainMenu(user.role);
+            await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n🏠 **Main Menu**\nChoose an option:', {
+              parse_mode: 'Markdown',
+              ...menu
+            });
           }
         }
       } catch (e) {
         logger.error("OTP/PDF Error:", {
           error: e.message,
           stack: e.stack,
-          response: e.response?.data
+          response: safeResponseForLog(e.response?.data)
         });
         try {
           await ctx.reply(`❌ Failed: ${e.response?.data?.message || e.message || 'Unknown error. Please try again.'}`);

@@ -1,5 +1,16 @@
 const winston = require('winston');
 
+/** Avoid logging huge bodies (e.g. 2MB base64 PDF response). */
+function safeResponseForLog(data) {
+  if (data === undefined || data === null) return data;
+  if (typeof data === 'string') {
+    return data.length > 500 ? data.substring(0, 500) + '...[truncated]' : data;
+  }
+  if (typeof data === 'object' && data !== null && data.message) return { message: data.message };
+  const s = String(data);
+  return s.length > 500 ? s.substring(0, 500) + '...[truncated]' : s;
+}
+
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
@@ -26,3 +37,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 module.exports = logger;
+module.exports.safeResponseForLog = safeResponseForLog;
