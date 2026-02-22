@@ -154,7 +154,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   }
   const tid = String(telegramId).trim();
   let user = await User.findOne({ telegramId: tid });
-  if (!user || user.role === 'unauthorized') {
+  if (!user) {
     return res.redirect('/dashboard?error=user_must_start');
   }
   if (user.role === 'admin' || user.role === 'superadmin') {
@@ -189,7 +189,8 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/dashboard');
   let subUser = await User.findOne({ telegramId: tid });
-  if (!subUser || subUser.role === 'unauthorized') return res.redirect(`/buyer/${req.params.id}?error=must_start`);
+  if (!subUser) return res.redirect(`/buyer/${req.params.id}?error=must_start`);
+  if (subUser.role === 'admin' || subUser.role === 'superadmin') return res.redirect(`/buyer/${req.params.id}?error=already_admin`);
   if ((buyer.subUsers || []).length >= 9) return res.redirect(`/buyer/${req.params.id}?error=full`);
   if ((buyer.subUsers || []).includes(tid)) return res.redirect(`/buyer/${req.params.id}?error=already`);
   buyer.subUsers = buyer.subUsers || [];
@@ -420,10 +421,17 @@ bot.action('dashboard_super', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     const { text, reply_markup } = await renderSuperAdminDashboard(ctx, 1);
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup });
+    try {
+      await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup });
+    } catch (editErr) {
+      logger.warn('dashboard_super editMessageText failed, sending new message:', editErr.message);
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup });
+    }
   } catch (error) {
-    logger.error('Dashboard super error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    logger.error('Dashboard super error:', error?.message || error, error?.stack);
+    try {
+      ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role || 'user') });
+    } catch (_) {}
   }
 });
 
@@ -810,6 +818,18 @@ bot.action('manage_users', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     const user = ctx.state.user;
+    if (!user || !user.role) {
+      return ctx.reply('❌ Session error. Send /start again.', { ...getMainMenu('user') });
+    }
+
+    const sendScreen = async (text, keyboard) => {
+      try {
+        await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
+      } catch (editErr) {
+        logger.warn('manage_users editMessageText failed, sending new message:', editErr.message);
+        await ctx.reply(text, { parse_mode: 'Markdown', ...keyboard });
+      }
+    };
 
     if (user.role === 'superadmin') {
       const title = '👑 **SUPER ADMIN USER MANAGEMENT**\n\n';
@@ -822,7 +842,7 @@ bot.action('manage_users', async (ctx) => {
         [Markup.button.callback('5️⃣ Remove User Under Admin', 'remove_user_under_admin')],
         [Markup.button.callback('6️⃣ 🔙 Back to Main Menu', 'main_menu')]
       ]);
-      await ctx.editMessageText(title + sub, { parse_mode: 'Markdown', ...keyboard });
+      await sendScreen(title + sub, keyboard);
       return;
     }
 
@@ -835,14 +855,16 @@ bot.action('manage_users', async (ctx) => {
         [Markup.button.callback('3️⃣ Remove User', 'remove_my_user_list_1')],
         [Markup.button.callback('4️⃣ 🔙 Back to Main Menu', 'main_menu')]
       ]);
-      await ctx.editMessageText(title + sub, { parse_mode: 'Markdown', ...keyboard });
+      await sendScreen(title + sub, keyboard);
       return;
     }
 
-    await ctx.editMessageText(getPanelTitle(user.role) + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu(user.role) });
+    await sendScreen(getPanelTitle(user.role) + '\n\nChoose an option:', getMainMenu(user.role));
   } catch (error) {
-    logger.error('Manage users error:', error);
-    ctx.reply('❌ Failed to load users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    logger.error('Manage users error:', error?.message || error, error?.stack);
+    try {
+      ctx.reply('❌ Failed to load users. Please try again.', { ...getMainMenu(ctx.state.user?.role || 'user') });
+    } catch (_) {}
   }
 });
 

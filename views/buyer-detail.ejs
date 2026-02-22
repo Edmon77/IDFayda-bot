@@ -67,7 +67,7 @@
                 </div>
                 <button type="submit" class="btn btn-primary">Add user</button>
                 <% if (typeof error !== 'undefined' && error) { %>
-                    <p class="msg err"><%= error === 'must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid ID' : error === 'full' ? 'Max 9 users' : error === 'already' ? 'Already added' : error %></p>
+                    <p class="msg err"><%= error === 'must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid ID' : error === 'full' ? 'Max 9 users' : error === 'already' ? 'Already added' : error === 'already_admin' ? 'That user is an admin' : error %></p>
                 <% } %>
             </form>
         </div>
