@@ -1278,7 +1278,7 @@ bot.on('text', async (ctx) => {
         return ctx.reply('❌ Admin no longer found. Cancelled.', { ...getMainMenu(ctx.state.user?.role) });
       }
       const targetUser = await User.findOne({ telegramId: userId });
-      if (!targetUser || targetUser.role === 'unauthorized') {
+      if (!targetUser) {
         return ctx.reply('❌ That user has not started the bot yet. Ask them to send /start first.');
       }
       if (targetUser.role === 'admin') {
@@ -1336,7 +1336,7 @@ bot.on('text', async (ctx) => {
 
       try {
         let subUser = await User.findOne({ telegramId });
-        if (!subUser || subUser.role === 'unauthorized') {
+        if (!subUser) {
           ctx.session = null;
           const menu = getMainMenu(ctx.state.user?.role);
           return ctx.reply(
