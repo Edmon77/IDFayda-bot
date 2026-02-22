@@ -16,10 +16,8 @@ process.on('uncaughtException', (err) => {
 const express = require('express');
 const crypto = require('crypto');
 const helmet = require('helmet');
-const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const { doubleCsrf } = require('csrf-csrf');
 const Captcha = require('2captcha');
 const fayda = require('./utils/faydaClient');
 const { Markup } = require('telegraf');
@@ -46,7 +44,6 @@ const app = express();
 
 // Security headers
 app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for EJS inline styles
-app.use(cookieParser(process.env.SESSION_SECRET));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(session({
@@ -65,35 +62,28 @@ app.use(session({
 }));
 app.set('view engine', 'ejs');
 
-// CSRF protection for web dashboard forms (double-submit cookie pattern)
-const csrfProtection = doubleCsrf({
-  getSecret: () => process.env.SESSION_SECRET,
-  cookieName: '__csrf',
-  cookieOptions: {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
-    signed: true
-  },
-  getTokenFromRequest: (req) => req.body._csrf || req.headers['x-csrf-token']
-});
-// Apply CSRF validation to POST routes except webhook
-app.use((req, res, next) => {
-  if (req.path === '/webhook') return next();
-  if (req.method === 'POST') return csrfProtection.doubleCsrfProtection(req, res, next);
+// Simple session-based CSRF protection (no third-party library needed)
+function csrfToken(req) {
+  if (!req.session._csrf) {
+    req.session._csrf = crypto.randomBytes(32).toString('hex');
+  }
+  return req.session._csrf;
+}
+function csrfProtection(req, res, next) {
+  if (req.path === '/webhook') return next(); // Telegram webhook excluded
+  if (req.method === 'POST') {
+    const token = req.body._csrf || req.headers['x-csrf-token'];
+    if (!token || token !== req.session._csrf) {
+      return res.status(403).send('Invalid or missing CSRF token. Please refresh the page and try again.');
+    }
+  }
   next();
-});
+}
+app.use(csrfProtection);
 // Make CSRF token available to all EJS views
 app.use((req, res, next) => {
-  res.locals.csrfToken = csrfProtection.generateCsrfToken(req, res);
+  res.locals.csrfToken = csrfToken(req);
   next();
-});
-// Handle CSRF validation failures gracefully
-app.use((err, req, res, next) => {
-  if (err.code === 'EBADCSRFTOKEN' || err.message === 'invalid csrf token') {
-    return res.status(403).send('Invalid or missing CSRF token. Please refresh the page and try again.');
-  }
-  next(err);
 });
 
 // Health check endpoint (simple – for load balancers)
