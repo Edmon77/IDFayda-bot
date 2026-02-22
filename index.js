@@ -66,7 +66,7 @@ app.use(session({
 app.set('view engine', 'ejs');
 
 // CSRF protection for web dashboard forms (double-submit cookie pattern)
-const { generateToken, doubleCsrfProtection } = doubleCsrf({
+const csrfProtection = doubleCsrf({
   getSecret: () => process.env.SESSION_SECRET,
   cookieName: '__csrf',
   cookieOptions: {
@@ -77,16 +77,23 @@ const { generateToken, doubleCsrfProtection } = doubleCsrf({
   },
   getTokenFromRequest: (req) => req.body._csrf || req.headers['x-csrf-token']
 });
-// Apply CSRF to all POST routes except webhook
+// Apply CSRF validation to POST routes except webhook
 app.use((req, res, next) => {
   if (req.path === '/webhook') return next();
-  if (req.method === 'POST') return doubleCsrfProtection(req, res, next);
+  if (req.method === 'POST') return csrfProtection.doubleCsrfProtection(req, res, next);
   next();
 });
 // Make CSRF token available to all EJS views
 app.use((req, res, next) => {
-  res.locals.csrfToken = generateToken(req, res);
+  res.locals.csrfToken = csrfProtection.generateCsrfToken(req, res);
   next();
+});
+// Handle CSRF validation failures gracefully
+app.use((err, req, res, next) => {
+  if (err.code === 'EBADCSRFTOKEN' || err.message === 'invalid csrf token') {
+    return res.status(403).send('Invalid or missing CSRF token. Please refresh the page and try again.');
+  }
+  next(err);
 });
 
 // Health check endpoint (simple – for load balancers)
