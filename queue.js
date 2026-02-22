@@ -5,6 +5,7 @@ const logger = require('./utils/logger');
 const { safeResponseForLog } = require('./utils/logger');
 const { sanitizeFilename } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
+const { getMainMenu } = require('./utils/menu');
 const fayda = require('./utils/faydaClient');
 const PDF_FETCH_ATTEMPTS = 3;
 const PDF_FETCH_RETRY_DELAY_MS = 2000;
@@ -68,7 +69,7 @@ logger.info(`PDF queue worker started with concurrency ${PDF_QUEUE_CONCURRENCY}`
 
 // Worker: processes jobs concurrently (configurable for 100–300 users; default 10)
 pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
-  const { chatId, userId, authHeader, pdfPayload, fullName } = job.data;
+  const { chatId, userId, userRole, authHeader, pdfPayload, fullName } = job.data;
 
   try {
     // 1. Fetch PDF from Fayda with retries for transient failures
@@ -106,7 +107,14 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
       filename: filename
     }, { caption: "✨ Your Digital ID is ready!" });
 
-    // 4. Increment download count for the user
+    // 4. Send main menu so user can continue
+    const menu = getMainMenu(userRole || 'sub');
+    await bot.telegram.sendMessage(chatId, '🏠 **Main Menu**\nChoose an option:', {
+      parse_mode: 'Markdown',
+      ...menu
+    });
+
+    // 5. Increment download count for the user
     await User.updateOne(
       { telegramId: userId },
       { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }

@@ -40,6 +40,10 @@ WEBHOOK_DOMAIN=https://your-domain.com
 PORT=3000
 NODE_ENV=production
 
+# Optional – Web dashboard (Super Admin, same options as bot):
+# ADMIN_USER=admin
+# ADMIN_PASS=your_secure_password
+
 # Optional – faster under heavy load (50+ concurrent downloads):
 # PDF_QUEUE_CONCURRENCY=20
 # PREFER_QUEUE_PDF=true
@@ -180,6 +184,16 @@ For **no sleep, no random restarts, and best uptime**:
 | **`PDF_QUEUE_CONCURRENCY=20`** (or 25) | More PDF jobs run in parallel. With `PREFER_QUEUE_PDF=true`, this caps how many requests hit Fayda at once (e.g. 20 instead of 50). |
 | **Keep-alive HTTP** | A shared HTTP client with keep-alive is used for all Fayda API calls (no config needed). |
 | **Railway Hobby + 2Captcha balance** | More RAM, no sleep; enough captcha balance so 2Captcha isn't the bottleneck. |
+
+## Web Dashboard (Super Admin)
+
+If `ADMIN_USER` and `ADMIN_PASS` are set, a web dashboard is available at `/login`. Same options as the bot:
+
+- **Dashboard**: Add Buyer, View Pending Users, Buyers list with stats
+- **Pending Users**: Users who sent /start but aren't added yet (with their Telegram ID for adding)
+- **Manage Buyer**: Add Sub-User (by Telegram ID), Remove Sub-User, Remove Admin
+
+**How we get Telegram ID:** When anyone sends a message to the bot (including /start), Telegram includes `ctx.from` with `id`, `first_name`, `username`, etc. We upsert that into MongoDB on every interaction. So when a new user sends /start, we save them with `role: 'pending'` — admins can then see them in View Pending Users and add them by their Telegram ID.
 
 ## Monitoring
 

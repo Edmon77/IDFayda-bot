@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema({
   phoneNumber: { type: String, sparse: true, index: true },
   firstName: String,
   lastName: String,
-  role: { type: String, enum: ['buyer', 'sub', 'admin'], default: 'sub', index: true },
+  role: { type: String, enum: ['buyer', 'sub', 'admin', 'pending'], default: 'pending', index: true },
   addedBy: { type: String, index: true },
   expiryDate: { type: Date, index: true },
   subUsers: [{ type: String }], // for buyers only

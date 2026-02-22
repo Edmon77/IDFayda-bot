@@ -20,6 +20,10 @@
 <body>
     <div class="container">
         <a href="/dashboard" style="color: #1a73e8;">← Back to Dashboard</a>
+        <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove" style="display: inline; margin-left: 15px;" onsubmit="return confirm('Remove this admin? They will need to be re-added.');">
+            <button type="submit" class="btn btn-danger">🗑 Remove Admin</button>
+        </form>
+        <br>
         <h1>Manage Buyer</h1>
         
         <div class="info">
@@ -42,14 +46,17 @@
         <h2>Add Sub-User</h2>
         <form method="POST" action="/buyer/<%= buyer.telegramId %>/add-sub">
             <div class="form-group">
-                <label>Identifier (Telegram ID, @username, or phone)</label>
-                <input type="text" name="identifier" required>
+                <label>Telegram ID (e.g. 5434080792) — user must have sent /start first</label>
+                <input type="text" name="identifier" placeholder="5434080792" required>
             </div>
             <div class="form-group">
                 <label>Expiry (days)</label>
                 <input type="number" name="expiryDays" value="30" required>
             </div>
             <button type="submit" class="btn">Add Sub-User</button>
+            <% if (typeof error !== 'undefined' && error) { %>
+                <p style="color: red; margin-top: 10px;"><%= error === 'must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid Telegram ID' : error === 'full' ? 'Already 9 sub-users' : error === 'already' ? 'Already added' : error %></p>
+            <% } %>
         </form>
         
         <div class="sub-list">

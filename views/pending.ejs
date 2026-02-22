@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pending Users</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; }
+        .header { background: #1a73e8; color: white; padding: 20px; }
+        .container { max-width: 900px; margin: 20px auto; padding: 0 20px; }
+        .box { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; }
+        .btn { padding: 8px 16px; background: #1a73e8; color: white; text-decoration: none; border-radius: 5px; font-size: 14px; display: inline-block; margin: 5px; }
+        .btn:hover { background: #1557b0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📋 Pending Users</h1>
+        <p>Users who sent /start but are not added yet. Add them as Buyer from Dashboard.</p>
+    </div>
+    <div class="container">
+        <a href="/dashboard" class="btn">← Back to Dashboard</a>
+        <div class="box">
+            <h2>Pending (<%= pending.length %>)</h2>
+            <% if (pending.length === 0) { %>
+                <p>No pending users.</p>
+            <% } else { %>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th>Username</th>
+                            <th>Telegram ID</th>
+                            <th>Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% pending.forEach((u, i) => { %>
+                            <tr>
+                                <td><%= i + 1 %></td>
+                                <td><%= u.firstName || 'N/A' %> <%= u.lastName || '' %></td>
+                                <td>@<%= u.telegramUsername || '–' %></td>
+                                <td><code><%= u.telegramId %></code></td>
+                                <td><%= u.lastActive ? new Date(u.lastActive).toLocaleString() : 'Never' %></td>
+                            </tr>
+                        <% }) %>
+                    </tbody>
+                </table>
+            <% } %>
+        </div>
+    </div>
+</body>
+</html>

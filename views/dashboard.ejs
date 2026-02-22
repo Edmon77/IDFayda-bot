@@ -26,6 +26,7 @@
     </div>
     
     <div class="container">
+        <a href="/pending" class="btn" style="margin-bottom: 20px;">📋 View Pending Users</a>
         <div class="stats">
             <div class="stat-card">
                 <h3>Total Users</h3>
@@ -50,7 +51,17 @@
             </div>
         </div>
         
-        <div class="buyers-table">
+        <div class="buyers-table" style="margin-top: 20px;">
+            <h2>Add Buyer</h2>
+            <form method="POST" action="/add-buyer" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                <label>Telegram ID (e.g. 5434080792) — user must have sent /start first</label>
+                <input type="text" name="telegramId" placeholder="5434080792" required style="padding: 8px; margin: 5px 0; width: 200px; border: 1px solid #ddd; border-radius: 5px;">
+                <input type="number" name="expiryDays" value="30" min="1" style="padding: 8px; margin: 5px; width: 80px; border: 1px solid #ddd; border-radius: 5px;"> days
+                <button type="submit" class="btn">Add Buyer</button>
+                <% if (typeof error !== 'undefined' && error) { %>
+                    <p style="color: red; margin-top: 5px;"><%= error === 'user_must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid Telegram ID' : error === 'already_added' ? 'Already a buyer/admin' : error %></p>
+                <% } %>
+            </form>
             <h2>Buyers List</h2>
             <a href="/export-users" class="btn" style="float: right; margin-bottom: 10px;">📥 Export CSV</a>
             <table>

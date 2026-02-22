@@ -2,14 +2,19 @@
  * Input validation utilities
  */
 
+// FCN = 16 digits, FIN = 12 digits (spaces allowed, e.g. 6320 7510 3126)
 function validateFaydaId(id) {
   if (!id || typeof id !== 'string') {
     return { valid: false, error: 'ID must be a string' };
   }
-  if (!/^\d{16}$/.test(id.trim())) {
-    return { valid: false, error: 'ID must be exactly 16 digits' };
+  const cleaned = id.replace(/\s/g, ''); // strip spaces (FIN can be 6320 7510 3126)
+  if (/^\d{16}$/.test(cleaned)) {
+    return { valid: true, value: cleaned, type: 'FCN' };
   }
-  return { valid: true, value: id.trim() };
+  if (/^\d{12}$/.test(cleaned)) {
+    return { valid: true, value: cleaned, type: 'FIN' };
+  }
+  return { valid: false, error: 'Enter 16-digit FCN or 12-digit FIN (e.g. 8037042063274197 or 632075103126)' };
 }
 
 function validateOTP(otp) {
