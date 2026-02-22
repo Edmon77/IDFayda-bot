@@ -1,76 +1,84 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Manage Buyer</title>
+    <title>Manage Admin — Fayda Bot</title>
     <style>
-        body { font-family: Arial; background: #f0f2f5; padding: 20px; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #1a73e8; }
-        .info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-        .info p { margin: 5px 0; }
-        .sub-list { margin-top: 20px; }
-        .sub-item { background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-        .btn { padding: 5px 10px; background: #1a73e8; color: white; text-decoration: none; border-radius: 5px; font-size: 12px; border: none; cursor: pointer; }
-        .btn-danger { background: #dc3545; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; }
-        input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 5px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f12; color: #e4e4e7; padding: 1.5rem; line-height: 1.5; }
+        .header { padding: 1rem 0; }
+        .container { max-width: 720px; margin: 0 auto; }
+        .back { color: #a1a1aa; text-decoration: none; font-size: 0.875rem; }
+        .back:hover { color: #e4e4e7; }
+        .card { background: #18181c; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+        .card h2 { font-size: 1rem; margin-bottom: 1rem; }
+        .info { font-size: 0.875rem; color: #a1a1aa; }
+        .info p { margin-bottom: 0.35rem; }
+        .info strong { color: #e4e4e7; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; font-size: 0.8rem; color: #a1a1aa; margin-bottom: 0.35rem; }
+        .form-group input { width: 100%; max-width: 240px; padding: 0.5rem 0.75rem; background: #1f1f24; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #e4e4e7; }
+        .btn { display: inline-flex; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; text-decoration: none; border: none; cursor: pointer; }
+        .btn-primary { background: #6366f1; color: white; }
+        .btn-primary:hover { background: #818cf8; }
+        .btn-danger { background: #ef4444; color: white; margin-left: 0.5rem; }
+        .sub-item { background: #1f1f24; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+        .sub-item span { font-size: 0.875rem; }
+        .msg.err { color: #ef4444; font-size: 0.875rem; margin-top: 0.5rem; }
     </style>
 </head>
 <body>
+    <div class="header"><a href="/dashboard" class="back">← Dashboard</a></div>
     <div class="container">
-        <a href="/dashboard" style="color: #1a73e8;">← Back to Dashboard</a>
-        <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove" style="display: inline; margin-left: 15px;" onsubmit="return confirm('Remove this admin? They will need to be re-added.');">
-            <button type="submit" class="btn btn-danger">🗑 Remove Admin</button>
-        </form>
-        <br>
-        <h1>Manage Buyer</h1>
-        
-        <div class="info">
-            <p><strong>Telegram ID:</strong> <%= buyer.telegramId %></p>
-            <p><strong>Name:</strong> <%= buyer.firstName || 'N/A' %> <%= buyer.lastName || '' %></p>
-            <p><strong>Username:</strong> @<%= buyer.telegramUsername || 'N/A' %></p>
-            <p><strong>Expiry Date:</strong> <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : 'N/A' %></p>
-            <p><strong>Sub-Users:</strong> <%= buyer.subUsers ? buyer.subUsers.length : 0 %>/9</p>
-        </div>
-
-        <!-- NEW DOWNLOAD SUMMARY SECTION -->
-        <h2>Download Summary</h2>
-        <div class="info">
-            <p><strong>Your Own PDFs:</strong> <%= buyerOwn %></p>
-            <p><strong>Your Users:</strong> <%= subs.length %></p>
-            <p><strong>Users' PDFs:</strong> <%= subUsersTotal %></p>
-            <p><strong>Total PDFs:</strong> <%= totalDownloads %></p>
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
+            <h1 style="font-size: 1.25rem;">Manage admin</h1>
+            <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove" style="display: inline;" onsubmit="return confirm('Remove this admin? Their users will be unassigned.');">
+                <button type="submit" class="btn btn-danger">Remove admin</button>
+            </form>
         </div>
         
-        <h2>Add Sub-User</h2>
-        <form method="POST" action="/buyer/<%= buyer.telegramId %>/add-sub">
-            <div class="form-group">
-                <label>Telegram ID (e.g. 5434080792) — user must have sent /start first</label>
-                <input type="text" name="identifier" placeholder="5434080792" required>
+        <div class="card">
+            <h2>Admin info</h2>
+            <div class="info">
+                <p><strong>Telegram ID:</strong> <%= buyer.telegramId %></p>
+                <p><strong>Name:</strong> <%= buyer.firstName || '—' %> <%= buyer.lastName || '' %></p>
+                <p><strong>Username:</strong> @<%= buyer.telegramUsername || '—' %></p>
+                <p><strong>Expiry:</strong> <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : '—' %></p>
+                <p><strong>Users:</strong> <%= buyer.subUsers ? buyer.subUsers.length : 0 %>/9</p>
             </div>
-            <div class="form-group">
-                <label>Expiry (days)</label>
-                <input type="number" name="expiryDays" value="30" required>
+        </div>
+        <div class="card">
+            <h2>Download summary</h2>
+            <div class="info">
+                <p><strong>Own PDFs:</strong> <%= buyerOwn %></p>
+                <p><strong>Users' PDFs:</strong> <%= subUsersTotal %></p>
+                <p><strong>Total:</strong> <%= totalDownloads %></p>
             </div>
-            <button type="submit" class="btn">Add Sub-User</button>
-            <% if (typeof error !== 'undefined' && error) { %>
-                <p style="color: red; margin-top: 10px;"><%= error === 'must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid Telegram ID' : error === 'full' ? 'Already 9 sub-users' : error === 'already' ? 'Already added' : error %></p>
-            <% } %>
-        </form>
-        
-        <div class="sub-list">
-            <h2>Current Sub-Users</h2>
-            <% if (subs.length === 0) { %>
-                <p>No sub-users yet.</p>
-            <% } %>
+        </div>
+        <div class="card">
+            <h2>Add user</h2>
+            <form method="POST" action="/buyer/<%= buyer.telegramId %>/add-sub">
+                <div class="form-group">
+                    <label>Telegram ID (user must have sent /start first)</label>
+                    <input type="text" name="identifier" placeholder="5434080792" required>
+                </div>
+                <div class="form-group">
+                    <label>Expiry (days)</label>
+                    <input type="number" name="expiryDays" value="30" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Add user</button>
+                <% if (typeof error !== 'undefined' && error) { %>
+                    <p class="msg err"><%= error === 'must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid ID' : error === 'full' ? 'Max 9 users' : error === 'already' ? 'Already added' : error %></p>
+                <% } %>
+            </form>
+        </div>
+        <div class="card">
+            <h2>Users (<%= subs.length %>)</h2>
+            <% if (subs.length === 0) { %><p class="info">No users yet.</p><% } %>
             <% subs.forEach(sub => { %>
                 <div class="sub-item">
                     <span>
-                        <strong><%= sub.firstName || sub.telegramUsername || sub.telegramId %></strong> 
-                        (PDFs: <%= sub.downloadCount || 0 %>)<br>
-                        ID: <%= sub.telegramId %><br>
-                        Expiry: <%= sub.expiryDate ? new Date(sub.expiryDate).toLocaleDateString() : 'N/A' %>
+                        <strong><%= sub.firstName || sub.telegramUsername || sub.telegramId %></strong><br>
+                        ID: <%= sub.telegramId %> · PDFs: <%= sub.downloadCount || 0 %>
                     </span>
                     <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove-sub/<%= sub.telegramId %>" style="display: inline;">
                         <button type="submit" class="btn btn-danger">Remove</button>

@@ -108,7 +108,7 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
     }, { caption: "✨ Your Digital ID is ready!" });
 
     // 4. Send main menu so user can continue
-    const menu = getMainMenu(userRole || 'sub');
+    const menu = getMainMenu(userRole || 'user');
     await bot.telegram.sendMessage(chatId, '🏠 **Main Menu**\nChoose an option:', {
       parse_mode: 'Markdown',
       ...menu

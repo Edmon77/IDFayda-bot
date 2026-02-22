@@ -27,7 +27,8 @@ const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
 const { validateFaydaId, validateOTP } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
-const { getMainMenu } = require('./utils/menu');
+const { getMainMenu, getPanelTitle, paginate } = require('./utils/menu');
+const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
 
@@ -124,26 +125,26 @@ app.get('/logout', (req, res) => {
   res.redirect('/login');
 });
 app.get('/dashboard', requireWebAuth, async (req, res) => {
-  const buyers = await User.find({ role: 'buyer' }).sort({ createdAt: -1 }).lean();
-  const allSubIds = buyers.flatMap(b => b.subUsers || []);
+  const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).lean();
+  const allSubIds = admins.flatMap(b => b.subUsers || []);
   const subs = await User.find({ telegramId: { $in: allSubIds } }).select('telegramId downloadCount').lean();
   const subMap = new Map(subs.map(s => [s.telegramId, s.downloadCount || 0]));
   const stats = {
     totalUsers: await User.countDocuments(),
-    buyers: buyers.length,
+    admins: admins.length,
     subUsers: allSubIds.length,
-    expiringSoon: await User.countDocuments({ expiryDate: { $lt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), $gt: new Date() }, role: { $in: ['buyer', 'sub'] } }),
-    totalDownloads: buyers.reduce((s, b) => s + (b.downloadCount || 0), 0) + subs.reduce((s, u) => s + (u.downloadCount || 0), 0)
+    expiringSoon: await User.countDocuments({ expiryDate: { $lt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), $gt: new Date() }, role: { $in: ['admin', 'user'] } }),
+    totalDownloads: admins.reduce((s, b) => s + (b.downloadCount || 0), 0) + subs.reduce((s, u) => s + (u.downloadCount || 0), 0)
   };
-  const enriched = buyers.map(b => {
+  const enriched = admins.map(b => {
     const subIds = b.subUsers || [];
     const subDownloads = subIds.reduce((sum, id) => sum + (subMap.get(id) || 0), 0);
     return { ...b, subDownloads, totalDownloads: (b.downloadCount || 0) + subDownloads };
   });
-  res.render('dashboard', { stats, buyers: enriched, error: req.query.error });
+  res.render('dashboard', { stats, admins: enriched, error: req.query.error });
 });
 app.get('/pending', requireWebAuth, async (req, res) => {
-  const pending = await User.find({ role: 'pending' }).sort({ lastActive: -1 }).limit(50).lean();
+  const pending = await User.find({ role: 'unauthorized' }).sort({ lastActive: -1 }).limit(50).lean();
   res.render('pending', { pending });
 });
 app.post('/add-buyer', requireWebAuth, async (req, res) => {
@@ -153,22 +154,23 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   }
   const tid = String(telegramId).trim();
   let user = await User.findOne({ telegramId: tid });
-  if (!user || user.role === 'pending') {
+  if (!user || user.role === 'unauthorized') {
     return res.redirect('/dashboard?error=user_must_start');
   }
-  if (user.role === 'buyer' || user.role === 'admin') {
+  if (user.role === 'admin' || user.role === 'superadmin') {
     return res.redirect('/dashboard?error=already_added');
   }
   if (user.addedBy) await User.updateOne({ telegramId: user.addedBy }, { $pull: { subUsers: tid } });
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + parseInt(expiryDays) || 30);
-  user.role = 'buyer';
+  user.role = 'admin';
   user.addedBy = undefined;
   user.expiryDate = expiry;
   user.subUsers = [];
   await user.save();
   try {
-    await bot.telegram.sendMessage(tid, "✅ You've been added! Here's your menu:", { parse_mode: 'Markdown', ...getMainMenu('buyer') });
+    await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(tid, getPanelTitle('admin') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('admin') });
   } catch (e) {}
   res.redirect('/dashboard');
 });
@@ -187,18 +189,20 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/dashboard');
   let subUser = await User.findOne({ telegramId: tid });
-  if (!subUser || subUser.role === 'pending') return res.redirect(`/buyer/${req.params.id}?error=must_start`);
+  if (!subUser || subUser.role === 'unauthorized') return res.redirect(`/buyer/${req.params.id}?error=must_start`);
   if ((buyer.subUsers || []).length >= 9) return res.redirect(`/buyer/${req.params.id}?error=full`);
   if ((buyer.subUsers || []).includes(tid)) return res.redirect(`/buyer/${req.params.id}?error=already`);
   buyer.subUsers = buyer.subUsers || [];
   buyer.subUsers.push(tid);
   await buyer.save();
-  subUser.role = 'sub';
+  subUser.role = 'user';
   subUser.addedBy = buyer.telegramId;
+  subUser.parentAdmin = buyer.telegramId;
   subUser.expiryDate = buyer.expiryDate;
   await subUser.save();
   try {
-    await bot.telegram.sendMessage(tid, "✅ You've been added! Here's your menu:", { parse_mode: 'Markdown', ...getMainMenu('sub') });
+    await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(tid, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
   } catch (e) {}
   res.redirect(`/buyer/${req.params.id}`);
 });
@@ -210,12 +214,12 @@ app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, async (req, res) =
 app.post('/buyer/:id/remove', requireWebAuth, async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/dashboard');
-  buyer.role = 'pending';
+  buyer.role = 'unauthorized';
   buyer.addedBy = undefined;
   buyer.expiryDate = undefined;
   buyer.subUsers = [];
   await buyer.save();
-  await User.updateMany({ addedBy: req.params.id }, { role: 'pending', addedBy: undefined, expiryDate: undefined });
+  await User.updateMany({ addedBy: req.params.id }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
   res.redirect('/dashboard');
 });
 app.get('/export-users', requireWebAuth, async (req, res) => {
@@ -289,7 +293,7 @@ bot.use(async (ctx, next) => {
             telegramUsername: ctx.from.username,
             lastActive: new Date()
           },
-          $setOnInsert: { role: 'pending', createdAt: new Date() }
+          $setOnInsert: { role: 'unauthorized', isWaitingApproval: true, createdAt: new Date() }
         },
         { upsert: true }
       );
@@ -313,11 +317,14 @@ bot.use(async (ctx, next) => {
     
     const user = await auth.getUser(telegramId);
     
-    if (!user || user.role === 'pending') {
-      return ctx.reply('❌ You are not authorized to use this bot.\nContact admin to purchase access.');
+    if (!user || user.role === 'unauthorized') {
+      return ctx.reply(
+        `❌ Access Denied\n\nYour Telegram ID: \`${telegramId}\`\n\nSend this ID to an admin to purchase access.`,
+        { parse_mode: 'Markdown' }
+      );
     }
     
-    if (user.role !== 'admin' && user.expiryDate && new Date(user.expiryDate) < new Date()) {
+    if (user.role !== 'superadmin' && user.expiryDate && new Date(user.expiryDate) < new Date()) {
       return ctx.reply('❌ Your subscription has expired. Please renew.');
     }
     
@@ -342,7 +349,8 @@ bot.start(async (ctx) => {
     ctx.session = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
-    await ctx.reply('🏠 **Main Menu**\nChoose an option:', {
+    const title = getPanelTitle(user.role);
+    await ctx.reply(`${title}\n\nChoose an option:`, {
       parse_mode: 'Markdown',
       ...menu
     });
@@ -358,7 +366,8 @@ bot.command('cancel', async (ctx) => {
     ctx.session = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
-    await ctx.reply('❌ Cancelled. Back to **Main Menu**.', {
+    const title = getPanelTitle(user.role);
+    await ctx.reply('❌ Cancelled. Back to **Main Menu**.\n\n' + title + '\n\nChoose an option:', {
       parse_mode: 'Markdown',
       ...menu
     });
@@ -392,60 +401,293 @@ bot.action('main_menu', async (ctx) => {
     ctx.session = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
-    await ctx.editMessageText('🏠 **Main Menu**\nChoose an option:', {
+    const title = getPanelTitle(user.role);
+    await ctx.editMessageText(`${title}\n\nChoose an option:`, {
       parse_mode: 'Markdown',
       ...menu
     });
   } catch (error) {
     logger.error('Main menu action error:', error);
     try {
-      ctx.reply('🏠 **Main Menu**\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
+      const title = getPanelTitle(ctx.state.user?.role);
+      ctx.reply(`${title}\n\nChoose an option:`, { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
     } catch (_) {}
   }
 });
 
-// ---------- Super Admin: Dashboard ----------
+// ---------- Super Admin: Dashboard (Work Summary + Recent Activity paginated) ----------
 bot.action('dashboard_super', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    
-    const buyers = await User.find({ role: 'buyer' })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
-    const allSubIds = buyers.flatMap(b => b.subUsers || []);
-    const allSubs = await User.find({ telegramId: { $in: allSubIds } })
-      .select('telegramId firstName telegramUsername downloadCount')
-      .lean()
-      .exec();
-    const subMap = new Map(allSubs.map(s => [s.telegramId, s]));
-    
-    const admin = ctx.state.user;
-    let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
-    text += `Admin: ${admin.firstName || 'N/A'} (@${admin.telegramUsername || 'N/A'})\n`;
-    text += `ID: \`${admin.telegramId}\`\n\n`;
-    text += '**Admins (Buyers):**\n\n';
-    
-    const buttons = [];
-    for (const buyer of buyers) {
-      const subIds = buyer.subUsers || [];
-      const subDownloads = subIds.reduce((sum, id) => sum + ((subMap.get(id) || {}).downloadCount || 0), 0);
-      const total = (buyer.downloadCount || 0) + subDownloads;
-      text += `**${buyer.firstName || 'N/A'}** (@${buyer.telegramUsername || 'N/A'})\n`;
-      text += `ID: \`${buyer.telegramId}\`\n`;
-      text += `Work Summary:\n`;
-      text += `PDFs: ${buyer.downloadCount || 0}\n`;
-      text += `Users: ${subIds.length}\n`;
-      text += `Users' PDFs: ${subDownloads}\n`;
-      text += `Total: ${total}\n`;
-      buttons.push([Markup.button.callback(`Sub Users (${subIds.length})`, `subusers_${buyer.telegramId}`)]);
-      text += '\n';
-    }
-    buttons.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
+    const { text, reply_markup } = await renderSuperAdminDashboard(ctx, 1);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup });
   } catch (error) {
     logger.error('Dashboard super error:', error);
     ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+async function renderSuperAdminDashboard(ctx, activityPage = 1) {
+  const me = ctx.state.user;
+  const myPdfs = me.downloadCount || 0;
+  const admins = await User.find({ role: 'admin' }).select('telegramId firstName telegramUsername subUsers downloadCount').lean();
+  const allUserIds = admins.flatMap(a => a.subUsers || []);
+  const users = await User.find({ telegramId: { $in: allUserIds } }).select('telegramId downloadCount').lean();
+  const userPdfMap = new Map(users.map(u => [u.telegramId, u.downloadCount || 0]));
+  const totalUsers = allUserIds.length;
+  const usersPdfs = allUserIds.reduce((s, id) => s + (userPdfMap.get(id) || 0), 0);
+  const totalPdfs = myPdfs + admins.reduce((s, a) => s + (a.downloadCount || 0), 0) + usersPdfs;
+  let text = '👑 **YOUR SUPER ADMIN DASHBOARD**\n\n';
+  text += `Super Admin: ${me.firstName || 'N/A'} (@${me.telegramUsername || 'N/A'})\n`;
+  text += `ID: \`${me.telegramId}\`\n\n`;
+  text += '📊 **Work Summary**\n————————————\n';
+  text += `Your Own PDFs: ${myPdfs}\nYour Admins: ${admins.length}\nTotal Users: ${totalUsers}\nUsers' PDFs: ${usersPdfs}\nTotal PDFs: ${totalPdfs}\n————————————\n\n`;
+  const recentAll = await User.find({ $or: [{ role: 'admin' }, { role: 'user' }], telegramId: { $ne: me.telegramId } })
+    .sort({ lastDownload: -1, lastActive: -1 })
+    .select('telegramId firstName telegramUsername role downloadCount lastDownload')
+    .lean();
+  const { items: recentPage, page, totalPages } = paginate(recentAll, activityPage);
+  text += '📅 **Recent Activity** (Page ' + page + '/' + totalPages + ')\n\n';
+  recentPage.forEach(u => {
+    const d = u.lastDownload ? new Date(u.lastDownload).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '–';
+    text += `${d}\n${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'}) | PDFs: ${u.downloadCount || 0}\n`;
+  });
+  const btns = [];
+  if (totalPages > 1) {
+    const row = [];
+    if (page > 1) row.push(Markup.button.callback('⏮️ Previous', `recent_activity_page_${page - 1}`));
+    if (page < totalPages) row.push(Markup.button.callback('⏭️ Next', `recent_activity_page_${page + 1}`));
+    if (row.length) btns.push(row);
+  }
+  btns.push([Markup.button.callback('🔙 Back to Main Menu', 'main_menu')]);
+  return { text, reply_markup: { inline_keyboard: btns } };
+}
+
+bot.action(/recent_activity_page_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    const { text, reply_markup } = await renderSuperAdminDashboard(ctx, page);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup });
+  } catch (e) {
+    logger.error('Recent activity page error:', e);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Super Admin: View Admins (paginated 10 per page) ----------
+bot.action(/view_admins_page_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
+    const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
+    let text = '👑 **Your Admins** (Page ' + p + '/' + totalPages + '):\n\n';
+    pageAdmins.forEach((a, i) => {
+      const count = (a.subUsers || []).length;
+      text += `${(page - 1) * 10 + i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'})\n`;
+      text += `   ID: \`${a.telegramId}\`\n   Users: ${count}\n\n`;
+    });
+    const btns = [];
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `view_admins_page_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `view_admins_page_${p + 1}`));
+      if (row.length) btns.push(row);
+    }
+    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (error) {
+    logger.error('View admins error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Admin: View My Users (paginated 10 per page) ----------
+bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const admin = ctx.state.user;
+    const userIds = admin.subUsers || [];
+    const users = await User.find({ telegramId: { $in: userIds } }).select('telegramId firstName telegramUsername downloadCount').lean();
+    const page = parseInt(ctx.match[1], 10);
+    const { items: pageUsers, page: p, totalPages } = paginate(users, page);
+    let text = '🛠 **Your Users** (Page ' + p + '/' + totalPages + '):\n\n';
+    pageUsers.forEach((u, i) => {
+      text += `${(page - 1) * 10 + i + 1}. ${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'})\n`;
+      text += `   ID: \`${u.telegramId}\`\n   PDFs: ${u.downloadCount || 0}\n\n`;
+    });
+    const btns = [];
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `view_my_users_page_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `view_my_users_page_${p + 1}`));
+      if (row.length) btns.push(row);
+    }
+    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (error) {
+    logger.error('View my users error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Super Admin: Remove Admin list (paginated) ----------
+bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
+    const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
+    if (!pageAdmins.length) {
+      await ctx.editMessageText('❌ No admins to remove.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+      return;
+    }
+    let text = '**Select an admin to remove:**\n\n';
+    pageAdmins.forEach((a, i) => {
+      text += `${(page - 1) * 10 + i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+    });
+    const btns = pageAdmins.map(a => [Markup.button.callback(`❌ Remove ${a.firstName || a.telegramId}`, `remove_buyer_${a.telegramId}`)]);
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_admin_list_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `remove_admin_list_${p + 1}`));
+      btns.push(row);
+    }
+    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (error) {
+    logger.error('Remove admin list error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Admin: Remove User list (paginated) ----------
+bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const admin = ctx.state.user;
+    const userIds = admin.subUsers || [];
+    const users = await User.find({ telegramId: { $in: userIds } }).select('telegramId firstName telegramUsername').lean();
+    const page = parseInt(ctx.match[1], 10);
+    const { items: pageUsers, page: p, totalPages } = paginate(users, page);
+    if (!pageUsers.length) {
+      await ctx.editMessageText('❌ No users to remove.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+      return;
+    }
+    let text = '**Select a user to remove:**\n\n';
+    pageUsers.forEach((u, i) => {
+      text += `${(page - 1) * 10 + i + 1}. ${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
+    });
+    const btns = pageUsers.map(u => [Markup.button.callback(`❌ Remove ${u.firstName || u.telegramId}`, `remove_my_sub_${u.telegramId}`)]);
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_my_user_list_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `remove_my_user_list_${p + 1}`));
+      btns.push(row);
+    }
+    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (error) {
+    logger.error('Remove my user list error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Super Admin: Add User Under Admin (start flow) ----------
+bot.action('add_user_under_admin', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    ctx.session = { ...ctx.session, step: 'AWAITING_ADMIN_ID_FOR_USER' };
+    await ctx.editMessageText(
+      '📝 **Add User Under Admin**\n\nSend the **Telegram ID** of the **admin** (e.g. \`358404165\`).\n\n_They must already be an admin._',
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]) }
+    );
+  } catch (error) {
+    logger.error('Add user under admin error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Super Admin: Remove User Under Admin (list admins, then pick user) ----------
+bot.action('remove_user_under_admin', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
+    const { items: pageAdmins, page: p, totalPages } = paginate(admins, 1);
+    if (!pageAdmins.length) {
+      await ctx.editMessageText('❌ No admins.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+      return;
+    }
+    let text = '**Select the admin whose user you want to remove:**\n\n';
+    pageAdmins.forEach((a, i) => {
+      text += `${i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+    });
+    const btns = pageAdmins.map(a => [Markup.button.callback(`${a.firstName || a.telegramId}`, `remove_under_admin_${a.telegramId}_1`)]);
+    if (totalPages > 1) btns.push([Markup.button.callback('⏭️ Next', `remove_under_admin_list_2`)]);
+    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (error) {
+    logger.error('Remove user under admin error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const adminId = ctx.match[1];
+    const page = parseInt(ctx.match[2], 10);
+    const admin = await User.findOne({ telegramId: adminId }).lean();
+    if (!admin) {
+      return ctx.editMessageText('❌ Admin not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+    }
+    const userIds = admin.subUsers || [];
+    const users = await User.find({ telegramId: { $in: userIds } }).select('telegramId firstName telegramUsername').lean();
+    const { items: pageUsers, page: p, totalPages } = paginate(users, page);
+    if (!pageUsers.length) {
+      return ctx.editMessageText('❌ This admin has no users.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'remove_user_under_admin')]]));
+    }
+    let text = `**Remove user under ${admin.firstName || admin.telegramId}:**\n\n`;
+    pageUsers.forEach((u, i) => {
+      text += `${(page - 1) * 10 + i + 1}. ${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
+    });
+    const btns = pageUsers.map(u => [Markup.button.callback(`❌ ${u.firstName || u.telegramId}`, `remove_sub_${adminId}_${u.telegramId}`)]);
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_under_admin_${adminId}_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `remove_under_admin_${adminId}_${p + 1}`));
+      btns.push(row);
+    }
+    btns.push([Markup.button.callback('🔙 Back', 'remove_user_under_admin')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (error) {
+    logger.error('Remove under admin error:', error);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+bot.action(/remove_under_admin_list_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername').lean();
+    const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
+    let text = '**Select the admin whose user you want to remove:**\n\n';
+    pageAdmins.forEach((a, i) => {
+      text += `${(page - 1) * 10 + i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+    });
+    const btns = pageAdmins.map(a => [Markup.button.callback(`${a.firstName || a.telegramId}`, `remove_under_admin_${a.telegramId}_1`)]);
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_under_admin_list_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `remove_under_admin_list_${p + 1}`));
+      btns.push(row);
+    }
+    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+  } catch (e) {
+    logger.error('Remove under admin list error:', e);
   }
 });
 
@@ -494,6 +736,7 @@ bot.action('dashboard_buyer', async (ctx) => {
     const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
     const buyerOwn = buyer.downloadCount || 0;
     const total = buyerOwn + subDownloads;
+    const { items: pageSubs, page: p, totalPages } = paginate(subs, 1);
 
     let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
     text += `Admin: ${buyer.firstName || 'N/A'} (@${buyer.telegramUsername || 'N/A'})\n`;
@@ -503,49 +746,100 @@ bot.action('dashboard_buyer', async (ctx) => {
     text += `Your Users: ${subs.length}\n`;
     text += `Users' PDFs: ${subDownloads}\n`;
     text += `Total PDFs: ${total}\n\n`;
-    text += `**Your Users (Page 1/1):**\n`;
-    subs.forEach((sub, i) => {
-      text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
-      text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
+    text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
+    pageSubs.forEach((sub, i) => {
+      text += `${(p - 1) * 10 + i + 1}. ${sub.firstName || 'N/A'} (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
     });
 
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('👥 Manage Sub‑Users', 'manage_subs')],
-      [Markup.button.callback('🔙 Main Menu', 'main_menu')]
-    ]);
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
+    const keyboard = [];
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
+      keyboard.push(row);
+    }
+    keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
   } catch (error) {
     logger.error('Dashboard buyer error:', error);
     ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
-// ---------- Super Admin: Manage Users ----------
+bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    const buyer = ctx.state.user;
+    const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
+      .select('telegramId firstName telegramUsername downloadCount')
+      .lean()
+      .exec();
+    const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
+    const buyerOwn = buyer.downloadCount || 0;
+    const total = buyerOwn + subDownloads;
+    const { items: pageSubs, page: p, totalPages } = paginate(subs, page);
+    let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
+    text += `Admin: ${buyer.firstName || 'N/A'} (@${buyer.telegramUsername || 'N/A'})\n`;
+    text += `ID: \`${buyer.telegramId}\`\n\n`;
+    text += '**Work Summary:**\n';
+    text += `Your Own PDFs: ${buyerOwn}\nYour Users: ${subs.length}\nUsers' PDFs: ${subDownloads}\nTotal PDFs: ${total}\n\n`;
+    text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
+    pageSubs.forEach((sub, i) => {
+      text += `${(p - 1) * 10 + i + 1}. ${sub.firstName || 'N/A'} (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
+    });
+    const keyboard = [];
+    if (totalPages > 1) {
+      const row = [];
+      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
+      keyboard.push(row);
+    }
+    keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+  } catch (e) {
+    logger.error('Dashboard buyer page error:', e);
+    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+  }
+});
+
+// ---------- Manage Users (branch by role: Super Admin vs Admin) ----------
 bot.action('manage_users', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    const buyers = await User.find({ role: 'buyer' })
-      .sort({ createdAt: -1 })
-      .select('telegramId firstName telegramUsername subUsers')
-      .lean()
-      .exec();
-    const pendingCount = await User.countDocuments({ role: 'pending' });
-    
-    let text = '👥 **Manage Users**\n\n';
-    if (pendingCount) text += `📋 ${pendingCount} pending (sent /start, not added yet)\n\n`;
-    text += '**Buyers:**\n\n';
-    const buttons = [[Markup.button.callback('➕ Add Buyer', 'add_buyer')]];
-    for (const buyer of buyers) {
-      const subsCount = (buyer.subUsers || []).length;
-      const label = `${buyer.firstName || 'N/A'} (@${buyer.telegramUsername || 'N/A'}) – ${subsCount} users`;
-      buttons.push([Markup.button.callback(label, `select_admin_${buyer.telegramId}`)]);
+    const user = ctx.state.user;
+
+    if (user.role === 'superadmin') {
+      const title = '👑 **SUPER ADMIN USER MANAGEMENT**\n\n';
+      const sub = `Super Admin: ${user.firstName || 'N/A'} (@${user.telegramUsername || 'N/A'})\nID: \`${user.telegramId}\`\n\nChoose:`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('1️⃣ View Admins', 'view_admins_page_1')],
+        [Markup.button.callback('2️⃣ Add Admin', 'add_buyer')],
+        [Markup.button.callback('3️⃣ Remove Admin', 'remove_admin_list_1')],
+        [Markup.button.callback('4️⃣ Add User Under Admin', 'add_user_under_admin')],
+        [Markup.button.callback('5️⃣ Remove User Under Admin', 'remove_user_under_admin')],
+        [Markup.button.callback('6️⃣ 🔙 Back to Main Menu', 'main_menu')]
+      ]);
+      await ctx.editMessageText(title + sub, { parse_mode: 'Markdown', ...keyboard });
+      return;
     }
-    if (pendingCount) buttons.push([Markup.button.callback('📋 View Pending Users', 'view_pending')]);
-    buttons.push([Markup.button.callback('🔙 Main Menu', 'main_menu')]);
-    await ctx.editMessageText(text, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons }
-    });
+
+    if (user.role === 'admin') {
+      const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
+      const sub = `Admin: ${user.firstName || 'N/A'} (@${user.telegramUsername || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('1️⃣ View My Users', 'view_my_users_page_1')],
+        [Markup.button.callback('2️⃣ Add User', 'add_sub_self')],
+        [Markup.button.callback('3️⃣ Remove User', 'remove_my_user_list_1')],
+        [Markup.button.callback('4️⃣ 🔙 Back to Main Menu', 'main_menu')]
+      ]);
+      await ctx.editMessageText(title + sub, { parse_mode: 'Markdown', ...keyboard });
+      return;
+    }
+
+    await ctx.editMessageText(getPanelTitle(user.role) + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu(user.role) });
   } catch (error) {
     logger.error('Manage users error:', error);
     ctx.reply('❌ Failed to load users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
@@ -559,7 +853,7 @@ bot.action('add_buyer', async (ctx) => {
     ctx.session = { ...ctx.session, step: 'AWAITING_BUYER_ID' };
     const keyboard = Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]);
     await ctx.editMessageText(
-      '📝 **Add Buyer**\n\nSend the **Telegram ID** of the person (e.g. \`5434080792\`).\n\n_They must have sent /start first. Default 30 days access. Cancel to go back._',
+      '📝 **Add Admin**\n\nSend the **Telegram ID** of the person (e.g. \`5434080792\`).\n\n_They must have sent /start first. Default 30 days access. Cancel to go back._',
       { parse_mode: 'Markdown', ...keyboard }
     );
   } catch (error) {
@@ -572,7 +866,7 @@ bot.action('add_buyer', async (ctx) => {
 bot.action('view_pending', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    const pending = await User.find({ role: 'pending' })
+    const pending = await User.find({ role: 'unauthorized' })
       .sort({ lastActive: -1 })
       .limit(30)
       .select('telegramId firstName telegramUsername lastActive')
@@ -591,7 +885,7 @@ bot.action('view_pending', async (ctx) => {
       text += `\n_Use Add Buyer and enter their Telegram ID to add them._`;
     }
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add Buyer', 'add_buyer')],
+      [Markup.button.callback('➕ Add Admin', 'add_buyer')],
       [Markup.button.callback('🔙 Back to Users', 'manage_users')]
     ]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
@@ -711,12 +1005,12 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     if (!buyer) {
       return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Main Menu', 'main_menu')]]));
     }
-    buyer.role = 'pending';
+    buyer.role = 'unauthorized';
     buyer.addedBy = undefined;
     buyer.expiryDate = undefined;
     buyer.subUsers = [];
     await buyer.save();
-    await User.updateMany({ addedBy: buyerId }, { role: 'pending', addedBy: undefined, expiryDate: undefined });
+    await User.updateMany({ addedBy: buyerId }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
     await ctx.editMessageText(`✅ Admin removed. They can be added again later.`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Back to Users', 'manage_users')],
       [Markup.button.callback('🏠 Main Menu', 'main_menu')]
@@ -820,7 +1114,8 @@ bot.action('cancel_add_sub', async (ctx) => {
     ctx.session = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
-    await ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.', {
+    const title = getPanelTitle(user.role);
+    await ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.\n\n' + title + '\n\nChoose an option:', {
       parse_mode: 'Markdown',
       ...menu
     });
@@ -837,7 +1132,8 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
     const admin = await User.findOne({ telegramId: adminId }).lean();
     if (!admin) {
       const menu = getMainMenu(ctx.state.user?.role);
-      return ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.', { parse_mode: 'Markdown', ...menu });
+      const title = getPanelTitle(ctx.state.user?.role);
+      return ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.\n\n' + title + '\n\nChoose an option:', { parse_mode: 'Markdown', ...menu });
     }
     const subs = await User.find({ telegramId: { $in: admin.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
@@ -903,45 +1199,112 @@ bot.on('text', async (ctx) => {
       }
       try {
         let user = await User.findOne({ telegramId });
-        if (!user || user.role === 'pending') {
+        if (!user || user.role === 'unauthorized') {
           ctx.session = null;
           const menu = getMainMenu(ctx.state.user?.role);
           return ctx.reply('⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.', { ...menu });
         }
-        if (user.role === 'buyer' || user.role === 'admin') {
+        if (user.role === 'admin' || user.role === 'superadmin') {
           ctx.session = null;
           const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply('❌ This user is already a buyer or admin.', { ...menu });
+          return ctx.reply('❌ This user is already an admin or super admin.', { ...menu });
         }
-        // If they were a sub, remove from old buyer
         if (user.addedBy) {
           await User.updateOne({ telegramId: user.addedBy }, { $pull: { subUsers: user.telegramId } });
         }
         const expiryDate = new Date();
         expiryDate.setDate(expiryDate.getDate() + 30);
-        user.role = 'buyer';
+        user.role = 'admin';
         user.addedBy = undefined;
         user.expiryDate = expiryDate;
         user.subUsers = [];
         await user.save();
         ctx.session = null;
         const menu = getMainMenu(ctx.state.user?.role);
-        await ctx.reply(`✅ **${user.firstName || user.telegramUsername || user.telegramId}** added as buyer (30 days).`, {
+        await ctx.reply(`✅ **${user.firstName || user.telegramUsername || user.telegramId}** added as admin (30 days).`, {
           parse_mode: 'Markdown',
           ...menu
         });
         try {
-          await bot.telegram.sendMessage(user.telegramId, "✅ You've been added! Here's your menu:", {
-            parse_mode: 'Markdown',
-            ...getMainMenu('buyer')
-          });
+          await bot.telegram.sendMessage(user.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
+          await bot.telegram.sendMessage(user.telegramId, getPanelTitle('admin') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('admin') });
         } catch (e) {
-          logger.warn('Could not send menu to new buyer:', e.message);
+          logger.warn('Could not send menu to new admin:', e.message);
         }
       } catch (error) {
         logger.error('Add buyer error:', error);
         ctx.session = null;
         ctx.reply('❌ Failed to add buyer. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+      }
+      return;
+    }
+
+    // ----- Add User Under Admin (Super Admin): step 1 – admin ID -----
+    if (state.step === 'AWAITING_ADMIN_ID_FOR_USER') {
+      const adminId = text.trim().replace(/\s/g, '');
+      if (!/^\d+$/.test(adminId)) {
+        return ctx.reply('❌ Please enter a numeric Telegram ID for the admin.');
+      }
+      const admin = await User.findOne({ telegramId: adminId, role: 'admin' });
+      if (!admin) {
+        return ctx.reply('❌ No admin found with that ID. They must already be an admin.');
+      }
+      ctx.session.step = 'AWAITING_USER_ID_UNDER_ADMIN';
+      ctx.session.adminIdForUser = adminId;
+      await ctx.reply(
+        `✅ Admin found: ${admin.firstName || admin.telegramUsername || adminId}.\n\nNow send the **Telegram ID** of the **user** to add under this admin.`,
+        { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]) }
+      );
+      return;
+    }
+
+    // ----- Add User Under Admin: step 2 – user ID, then confirm and save -----
+    if (state.step === 'AWAITING_USER_ID_UNDER_ADMIN') {
+      const userId = text.trim().replace(/\s/g, '');
+      if (!/^\d+$/.test(userId)) {
+        return ctx.reply('❌ Please enter a numeric Telegram ID for the user.');
+      }
+      const adminId = state.adminIdForUser;
+      const admin = await User.findOne({ telegramId: adminId });
+      if (!admin) {
+        ctx.session = null;
+        return ctx.reply('❌ Admin no longer found. Cancelled.', { ...getMainMenu(ctx.state.user?.role) });
+      }
+      const targetUser = await User.findOne({ telegramId: userId });
+      if (!targetUser || targetUser.role === 'unauthorized') {
+        return ctx.reply('❌ That user has not started the bot yet. Ask them to send /start first.');
+      }
+      if (targetUser.role === 'superadmin' || targetUser.role === 'admin') {
+        return ctx.reply('❌ That ID belongs to an admin/super admin. Choose a regular user.');
+      }
+      if ((admin.subUsers || []).includes(userId)) {
+        ctx.session = null;
+        return ctx.reply('❌ This user is already under this admin.', { ...getMainMenu(ctx.state.user?.role) });
+      }
+      if ((admin.subUsers || []).length >= 9) {
+        return ctx.reply('❌ This admin already has 9 users.');
+      }
+      if (targetUser.addedBy) {
+        await User.updateOne({ telegramId: targetUser.addedBy }, { $pull: { subUsers: userId } });
+      }
+      admin.subUsers = admin.subUsers || [];
+      admin.subUsers.push(userId);
+      await admin.save();
+      targetUser.role = 'user';
+      targetUser.addedBy = adminId;
+      targetUser.parentAdmin = adminId;
+      targetUser.expiryDate = admin.expiryDate;
+      await targetUser.save();
+      ctx.session = null;
+      await ctx.reply(`✅ **${targetUser.firstName || targetUser.telegramId}** added under admin **${admin.firstName || adminId}**.`, {
+        parse_mode: 'Markdown',
+        ...getMainMenu(ctx.state.user?.role)
+      });
+      try {
+        await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
+        await bot.telegram.sendMessage(userId, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
+      } catch (e) {
+        logger.warn('Could not send activation to user:', e.message);
       }
       return;
     }
@@ -966,7 +1329,7 @@ bot.on('text', async (ctx) => {
       
       try {
         let subUser = await User.findOne({ telegramId });
-        if (!subUser || subUser.role === 'pending') {
+        if (!subUser || subUser.role === 'unauthorized') {
           ctx.session = null;
           const menu = getMainMenu(ctx.state.user?.role);
           return ctx.reply(
@@ -989,8 +1352,9 @@ bot.on('text', async (ctx) => {
         buyer.subUsers.push(subUser.telegramId);
         await buyer.save();
 
-        subUser.role = 'sub';
+        subUser.role = 'user';
         subUser.addedBy = buyer.telegramId;
+        subUser.parentAdmin = buyer.telegramId;
         subUser.expiryDate = buyer.expiryDate;
         await subUser.save();
 
@@ -998,23 +1362,22 @@ bot.on('text', async (ctx) => {
           ctx.chat.id,
           statusMsg.message_id,
           null,
-          `✅ Employee added successfully!\n\nThey can now use the bot.`
+          `✅ User added successfully!\n\nThey can now use the bot.`
         );
 
         ctx.session = null;
         const user = ctx.state.user;
         const menu = getMainMenu(user.role);
-        await ctx.reply('🏠 **Main Menu**\nChoose an option:', {
+        const title = getPanelTitle(user.role);
+        await ctx.reply(title + '\n\nChoose an option:', {
           parse_mode: 'Markdown',
           ...menu
         });
         try {
-          await bot.telegram.sendMessage(subUser.telegramId, "✅ You've been added! Here's your menu:", {
-            parse_mode: 'Markdown',
-            ...getMainMenu('sub')
-          });
+          await bot.telegram.sendMessage(subUser.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
+          await bot.telegram.sendMessage(subUser.telegramId, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
         } catch (e) {
-          logger.warn('Could not send menu to new sub-user:', e.message);
+          logger.warn('Could not send menu to new user:', e.message);
         }
       } catch (error) {
         logger.error('Add sub error:', error);
@@ -1144,7 +1507,8 @@ bot.on('text', async (ctx) => {
 
             const user = ctx.state.user;
             const menu = getMainMenu(user.role);
-            await ctx.reply('🏠 **Main Menu**\nChoose an option:', {
+            const title = getPanelTitle(user.role);
+            await ctx.reply(title + '\n\nChoose an option:', {
               parse_mode: 'Markdown',
               ...menu
             });
@@ -1167,7 +1531,7 @@ bot.on('text', async (ctx) => {
             const job = await pdfQueue.add({
               chatId: ctx.chat.id,
               userId: ctx.from.id.toString(),
-              userRole: ctx.state.user?.role || 'sub',
+              userRole: ctx.state.user?.role || 'user',
               authHeader,
               pdfPayload: { uin, signature },
               fullName
@@ -1199,7 +1563,8 @@ bot.on('text', async (ctx) => {
               pdfSent = true;
               const user = ctx.state.user;
               const menu = getMainMenu(user.role);
-              await ctx.reply('🏠 **Main Menu**\nChoose an option:', { parse_mode: 'Markdown', ...menu });
+              const title = getPanelTitle(user.role);
+              await ctx.reply(title + '\n\nChoose an option:', { parse_mode: 'Markdown', ...menu });
             } catch (syncError2) {
               logger.error('Synchronous PDF processing failed:', {
                 error: syncError2.message,
@@ -1215,7 +1580,8 @@ bot.on('text', async (ctx) => {
             ctx.session = null;
             const user = ctx.state.user;
             const menu = getMainMenu(user.role);
-            await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n🏠 **Main Menu**\nChoose an option:', {
+            const title = getPanelTitle(user.role);
+            await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n' + title + '\n\nChoose an option:', {
               parse_mode: 'Markdown',
               ...menu
             });
@@ -1270,6 +1636,7 @@ async function startServer() {
   try {
     // Connect to database
     await connectDB();
+    await migrateRoles();
 
     // Set webhook
     const webhookPath = '/webhook';

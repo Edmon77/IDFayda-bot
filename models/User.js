@@ -6,10 +6,15 @@ const userSchema = new mongoose.Schema({
   phoneNumber: { type: String, sparse: true, index: true },
   firstName: String,
   lastName: String,
-  role: { type: String, enum: ['buyer', 'sub', 'admin', 'pending'], default: 'pending', index: true },
+  // superadmin | admin | user | unauthorized
+  role: { type: String, enum: ['superadmin', 'admin', 'user', 'unauthorized'], default: 'unauthorized', index: true },
+  // For users: telegramId of their admin. For admins: optional (set if added by superadmin).
+  parentAdmin: { type: String, index: true },
+  // Legacy alias; we keep subUsers on admin for quick list
   addedBy: { type: String, index: true },
   expiryDate: { type: Date, index: true },
-  subUsers: [{ type: String }], // for buyers only
+  subUsers: [{ type: String }],
+  isWaitingApproval: { type: Boolean, default: false, index: true },
   createdAt: { type: Date, default: Date.now, index: true },
   lastActive: { type: Date, index: true },
   usageCount: { type: Number, default: 0 },
@@ -17,8 +22,8 @@ const userSchema = new mongoose.Schema({
   lastDownload: { type: Date }
 });
 
-// Compound indexes for common queries
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ addedBy: 1, role: 1 });
+userSchema.index({ parentAdmin: 1, role: 1 });
 
 module.exports = mongoose.model('User', userSchema);

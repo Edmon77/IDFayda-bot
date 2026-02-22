@@ -1,56 +1,53 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Pending Users</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pending Users — Fayda Bot</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; }
-        .header { background: #1a73e8; color: white; padding: 20px; }
-        .container { max-width: 900px; margin: 20px auto; padding: 0 20px; }
-        .box { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #f8f9fa; }
-        .btn { padding: 8px 16px; background: #1a73e8; color: white; text-decoration: none; border-radius: 5px; font-size: 14px; display: inline-block; margin: 5px; }
-        .btn:hover { background: #1557b0; }
+        :root { --bg: #0f0f12; --surface: #18181c; --text: #e4e4e7; --muted: #a1a1aa; --accent: #6366f1; }
+        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5; }
+        .header { background: var(--surface); border-bottom: 1px solid rgba(255,255,255,0.06); padding: 1rem 1.5rem; }
+        .container { max-width: 720px; margin: 0 auto; padding: 1.5rem; }
+        .btn { display: inline-flex; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; text-decoration: none; background: rgba(255,255,255,0.06); color: var(--text); margin-bottom: 1rem; }
+        .btn:hover { background: rgba(255,255,255,0.1); }
+        .card { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1.5rem; }
+        .card h2 { font-size: 1rem; margin-bottom: 1rem; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th { text-align: left; padding: 0.75rem; color: var(--muted); font-weight: 500; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        td { padding: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        code { font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.2rem 0.4rem; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>📋 Pending Users</h1>
-        <p>Users who sent /start but are not added yet. Add them as Buyer from Dashboard.</p>
-    </div>
-    <div class="container">
-        <a href="/dashboard" class="btn">← Back to Dashboard</a>
-        <div class="box">
-            <h2>Pending (<%= pending.length %>)</h2>
+    <header class="header">
+        <a href="/dashboard" class="btn">← Dashboard</a>
+    </header>
+    <main class="container">
+        <div class="card">
+            <h2>Pending users (<%= pending.length %>)</h2>
+            <p style="color: var(--muted); font-size: 0.875rem; margin-bottom: 1rem;">Users who sent /start but are not added yet. Add them as Admin from the dashboard.</p>
             <% if (pending.length === 0) { %>
                 <p>No pending users.</p>
             <% } else { %>
                 <table>
                     <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Name</th>
-                            <th>Username</th>
-                            <th>Telegram ID</th>
-                            <th>Last Active</th>
-                        </tr>
+                        <tr><th>Name</th><th>Username</th><th>Telegram ID</th><th>Last active</th></tr>
                     </thead>
                     <tbody>
-                        <% pending.forEach((u, i) => { %>
+                        <% pending.forEach(u => { %>
                             <tr>
-                                <td><%= i + 1 %></td>
-                                <td><%= u.firstName || 'N/A' %> <%= u.lastName || '' %></td>
-                                <td>@<%= u.telegramUsername || '–' %></td>
+                                <td><%= u.firstName || '—' %> <%= u.lastName || '' %></td>
+                                <td>@<%= u.telegramUsername || '—' %></td>
                                 <td><code><%= u.telegramId %></code></td>
-                                <td><%= u.lastActive ? new Date(u.lastActive).toLocaleString() : 'Never' %></td>
+                                <td><%= u.lastActive ? new Date(u.lastActive).toLocaleDateString() : '—' %></td>
                             </tr>
                         <% }) %>
                     </tbody>
                 </table>
             <% } %>
         </div>
-    </div>
+    </main>
 </body>
 </html>

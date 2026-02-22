@@ -37,31 +37,31 @@ async function createAdmin() {
       console.log(`   Role: ${existingUser.role}`);
       console.log(`   Name: ${existingUser.firstName || 'N/A'}`);
       
-      // Ask if they want to make them admin
-      if (existingUser.role !== 'admin') {
-        existingUser.role = 'admin';
+      // Upgrade to superadmin if not already
+      if (existingUser.role !== 'superadmin') {
+        existingUser.role = 'superadmin';
         await existingUser.save();
-        console.log(`\n✅ Updated user to admin role!`);
+        console.log(`\n✅ Updated user to superadmin role!`);
       } else {
-        console.log(`\n✅ User is already an admin!`);
+        console.log(`\n✅ User is already a super admin!`);
       }
       await mongoose.disconnect();
       return;
     }
 
-    // Create new admin user
+    // Create new super admin user
     const adminUser = new User({
       telegramId: telegramId,
-      role: 'admin',
-      firstName: 'Admin',
+      role: 'superadmin',
+      firstName: 'Super Admin',
       createdAt: new Date(),
       lastActive: new Date()
     });
 
     await adminUser.save();
-    console.log(`\n✅ Admin user created successfully!`);
+    console.log(`\n✅ Super admin user created successfully!`);
     console.log(`   Telegram ID: ${telegramId}`);
-    console.log(`   Role: admin`);
+    console.log(`   Role: superadmin`);
     console.log(`\n🎉 You can now use the bot! Send /start to your bot.`);
 
     await mongoose.disconnect();
