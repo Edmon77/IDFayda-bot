@@ -48,10 +48,32 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 100);
 }
 
+/**
+ * Escape special characters for Telegram Markdown (v1).
+ * Characters: _ * ` [
+ */
+function escMd(str) {
+  if (!str) return '';
+  return String(str).replace(/([_*`\[])/g, '\\$1');
+}
+
+/**
+ * Safe display name for Markdown messages.
+ * Falls back through firstName → username → telegramId → 'Unknown'.
+ * Escapes Markdown and rejects "empty-looking" names (e.g. just dots/spaces).
+ */
+function displayName(user, fallback) {
+  const raw = user?.firstName || user?.telegramUsername || fallback || user?.telegramId || 'Unknown';
+  const cleaned = String(raw).replace(/[.\s]/g, '').length > 0 ? raw : (user?.telegramId || 'Unknown');
+  return escMd(cleaned);
+}
+
 module.exports = {
   validateFaydaId,
   validateOTP,
   validateTelegramId,
   sanitizeUsername,
-  sanitizeFilename
+  sanitizeFilename,
+  escMd,
+  displayName
 };

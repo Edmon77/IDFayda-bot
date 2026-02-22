@@ -27,7 +27,7 @@ const User = require('./models/User');
 const auth = require('./middleware/auth');
 const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
-const { validateFaydaId, validateOTP } = require('./utils/validators');
+const { validateFaydaId, validateOTP, escMd, displayName } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
 const { getMainMenu, getPanelTitle, paginate } = require('./utils/menu');
 const { migrateRoles } = require('./utils/migrateRoles');
@@ -478,7 +478,7 @@ bot.action(/view_admins_page_(\d+)/, async (ctx) => {
     let text = '👑 **Your Admins** (Page ' + p + '/' + totalPages + '):\n\n';
     pageAdmins.forEach((a, i) => {
       const count = (a.subUsers || []).length;
-      text += `${(page - 1) * 10 + i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'})\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${a.telegramId}\`\n   Users: ${count}\n\n`;
     });
     const btns = [];
@@ -507,7 +507,7 @@ bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
     const { items: pageUsers, page: p, totalPages } = paginate(users, page);
     let text = '🛠 **Your Users** (Page ' + p + '/' + totalPages + '):\n\n';
     pageUsers.forEach((u, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'})\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${u.telegramId}\`\n   PDFs: ${u.downloadCount || 0}\n\n`;
     });
     const btns = [];
@@ -539,9 +539,9 @@ bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
     }
     let text = '**Select an admin to remove:**\n\n';
     pageAdmins.forEach((a, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
     });
-    const btns = pageAdmins.map(a => [Markup.button.callback(`❌ Remove ${a.firstName || a.telegramId}`, `remove_buyer_${a.telegramId}`)]);
+    const btns = pageAdmins.map(a => [Markup.button.callback(`❌ Remove ${escMd(a.firstName) || a.telegramId}`, `remove_buyer_${a.telegramId}`)]);
     if (totalPages > 1) {
       const row = [];
       if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_admin_list_${p - 1}`));
@@ -571,9 +571,9 @@ bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
     }
     let text = '**Select a user to remove:**\n\n';
     pageUsers.forEach((u, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
     });
-    const btns = pageUsers.map(u => [Markup.button.callback(`❌ Remove ${u.firstName || u.telegramId}`, `remove_my_sub_${u.telegramId}`)]);
+    const btns = pageUsers.map(u => [Markup.button.callback(`❌ Remove ${escMd(u.firstName) || u.telegramId}`, `remove_my_sub_${u.telegramId}`)]);
     if (totalPages > 1) {
       const row = [];
       if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_my_user_list_${p - 1}`));
@@ -617,7 +617,7 @@ bot.action('remove_user_under_admin', async (ctx) => {
     }
     let text = '**Select the admin whose user you want to remove:**\n\n';
     pageAdmins.forEach((a, i) => {
-      text += `${i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+      text += `${i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
     });
     const btns = pageAdmins.map(a => [Markup.button.callback(`${a.firstName || a.telegramId}`, `remove_under_admin_${a.telegramId}_1`)]);
     if (totalPages > 1) btns.push([Markup.button.callback('⏭️ Next', `remove_under_admin_list_2`)]);
@@ -645,11 +645,11 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
     if (!pageUsers.length) {
       return ctx.editMessageText('❌ This admin has no users.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'remove_user_under_admin')]]));
     }
-    let text = `**Remove user under ${admin.firstName || admin.telegramId}:**\n\n`;
+    let text = `**Remove user under ${escMd(admin.firstName) || admin.telegramId}:**\n\n`;
     pageUsers.forEach((u, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
     });
-    const btns = pageUsers.map(u => [Markup.button.callback(`❌ ${u.firstName || u.telegramId}`, `remove_sub_${adminId}_${u.telegramId}`)]);
+    const btns = pageUsers.map(u => [Markup.button.callback(`❌ ${escMd(u.firstName) || u.telegramId}`, `remove_sub_${adminId}_${u.telegramId}`)]);
     if (totalPages > 1) {
       const row = [];
       if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_under_admin_${adminId}_${p - 1}`));
@@ -673,7 +673,7 @@ bot.action(/remove_under_admin_list_(\d+)/, async (ctx) => {
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
     let text = '**Select the admin whose user you want to remove:**\n\n';
     pageAdmins.forEach((a, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${a.firstName || 'N/A'} (@${a.telegramUsername || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
     });
     const btns = pageAdmins.map(a => [Markup.button.callback(`${a.firstName || a.telegramId}`, `remove_under_admin_${a.telegramId}_1`)]);
     if (totalPages > 1) {
@@ -705,13 +705,13 @@ bot.action(/subusers_(\d+)/, async (ctx) => {
       .exec();
 
     let text = `**Sub Users**\n`;
-    text += `_${buyer.firstName || buyer.telegramId} (@${buyer.telegramUsername || 'N/A'})_\n\n`;
+    text += `_${escMd(buyer.firstName) || buyer.telegramId} (@${escMd(buyer.telegramUsername) || 'N/A'})_\n\n`;
     subs.forEach((sub, i) => {
-      text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${i + 1}. **${displayName(sub)}** (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
     });
 
-    const buttons = subs.map(sub => [Markup.button.callback(`❌ Remove ${sub.firstName || sub.telegramUsername || sub.telegramId}`, `remove_sub_${buyerId}_${sub.telegramId}`)]);
+    const buttons = subs.map(sub => [Markup.button.callback(`❌ Remove ${displayName(sub)}`, `remove_sub_${buyerId}_${sub.telegramId}`)]);
     buttons.push([Markup.button.callback('🔙 Back to Dashboard', 'dashboard_buyer')]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
   } catch (error) {
@@ -738,7 +738,7 @@ bot.action('dashboard_buyer', async (ctx) => {
     const { items: pageSubs, page: p, totalPages } = paginate(subs, 1);
 
     let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
-    text += `Admin: ${buyer.firstName || 'N/A'} (@${buyer.telegramUsername || 'N/A'})\n`;
+    text += `Admin: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
     text += `ID: \`${buyer.telegramId}\`\n\n`;
     text += '**Work Summary:**\n';
     text += `Your Own PDFs: ${buyerOwn}\n`;
@@ -747,7 +747,7 @@ bot.action('dashboard_buyer', async (ctx) => {
     text += `Total PDFs: ${total}\n\n`;
     text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
     pageSubs.forEach((sub, i) => {
-      text += `${(p - 1) * 10 + i + 1}. ${sub.firstName || 'N/A'} (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
     });
 
@@ -780,13 +780,13 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
     const total = buyerOwn + subDownloads;
     const { items: pageSubs, page: p, totalPages } = paginate(subs, page);
     let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
-    text += `Admin: ${buyer.firstName || 'N/A'} (@${buyer.telegramUsername || 'N/A'})\n`;
+    text += `Admin: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
     text += `ID: \`${buyer.telegramId}\`\n\n`;
     text += '**Work Summary:**\n';
     text += `Your Own PDFs: ${buyerOwn}\nYour Users: ${subs.length}\nUsers' PDFs: ${subDownloads}\nTotal PDFs: ${total}\n\n`;
     text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
     pageSubs.forEach((sub, i) => {
-      text += `${(p - 1) * 10 + i + 1}. ${sub.firstName || 'N/A'} (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
     });
     const keyboard = [];
@@ -826,7 +826,7 @@ bot.action('manage_users', async (ctx) => {
 
     if (user.role === 'admin') {
       const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
-      const sub = `Admin: ${user.firstName || 'N/A'} (@${user.telegramUsername || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
+      const sub = `Admin: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('1️⃣ View My Users', 'view_my_users_page_1')],
         [Markup.button.callback('2️⃣ Add User', 'add_sub_self')],
@@ -880,8 +880,8 @@ bot.action('view_pending', async (ctx) => {
       text += 'No pending users.';
     } else {
       pending.forEach((u, i) => {
-        const name = u.firstName || u.telegramUsername || u.telegramId;
-        const uname = u.telegramUsername ? `@${u.telegramUsername}` : '–';
+        const name = escMd(u.firstName) || escMd(u.telegramUsername) || u.telegramId;
+        const uname = u.telegramUsername ? `@${escMd(u.telegramUsername)}` : '–';
         text += `${i + 1}. **${name}** (${uname})\n   ID: \`${u.telegramId}\`\n`;
       });
       text += `\n_Use Add Buyer and enter their Telegram ID to add them._`;
@@ -916,12 +916,12 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
       .lean()
       .exec();
 
-    let text = `**Managing:** ${admin.firstName || 'N/A'} (@${admin.telegramUsername || 'N/A'})\n`;
+    let text = `**Managing:** ${escMd(admin.firstName) || 'N/A'} (@${escMd(admin.telegramUsername) || 'N/A'})\n`;
     text += `ID: \`${admin.telegramId}\`\n`;
     text += `PDFs: ${admin.downloadCount || 0} | Users: ${subs.length}\n\n`;
     text += `**Sub‑Users:**\n`;
     subs.forEach((sub, i) => {
-      text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${i + 1}. **${displayName(sub)}** (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
     });
 
@@ -984,10 +984,10 @@ bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
       ]));
     }
 
-    let text = `**Select a sub‑user to remove from ${admin.firstName || admin.telegramUsername || adminId}:**\n\n`;
+    let text = `**Select a sub‑user to remove from ${escMd(admin.firstName) || escMd(admin.telegramUsername) || adminId}:**\n\n`;
     const buttons = [];
     subs.forEach(sub => {
-      const label = `${sub.firstName || sub.telegramUsername || sub.telegramId} (PDFs: ${sub.downloadCount || 0})`;
+      const label = `${displayName(sub)} (PDFs: ${sub.downloadCount || 0})`;
       buttons.push([Markup.button.callback(`❌ ${label}`, `remove_sub_${adminId}_${sub.telegramId}`)]);
     });
     buttons.push([Markup.button.callback('🔙 Back', `select_admin_${adminId}`)]);
@@ -1071,7 +1071,7 @@ bot.action('manage_subs', async (ctx) => {
       text += 'You have no sub‑users yet.';
     } else {
       subs.forEach((sub, i) => {
-        text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+        text += `${i + 1}. **${displayName(sub)}** (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
         text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
       });
     }
@@ -1081,7 +1081,7 @@ bot.action('manage_subs', async (ctx) => {
     ];
     if (subs.length) {
       subs.forEach(sub => {
-        buttons.push([Markup.button.callback(`❌ Remove ${sub.firstName || sub.telegramUsername || sub.telegramId}`, `remove_my_sub_${sub.telegramId}`)]);
+        buttons.push([Markup.button.callback(`❌ Remove ${displayName(sub)}`, `remove_my_sub_${sub.telegramId}`)]);
       });
     }
     buttons.push([Markup.button.callback('🔙 Main Menu', 'main_menu')]);
@@ -1146,12 +1146,12 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
       .select('telegramId firstName telegramUsername downloadCount')
       .lean()
       .exec();
-    let text = `**Managing:** ${admin.firstName || 'N/A'} (@${admin.telegramUsername || 'N/A'})\n`;
+    let text = `**Managing:** ${escMd(admin.firstName) || 'N/A'} (@${escMd(admin.telegramUsername) || 'N/A'})\n`;
     text += `ID: \`${admin.telegramId}\`\n`;
     text += `PDFs: ${admin.downloadCount || 0} | Users: ${subs.length}\n\n`;
     text += `**Sub‑Users:**\n`;
     subs.forEach((sub, i) => {
-      text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${i + 1}. **${displayName(sub)}** (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
     });
     const buttons = [
@@ -1228,7 +1228,7 @@ bot.on('text', async (ctx) => {
         await user.save();
         ctx.session = null;
         const menu = getMainMenu(ctx.state.user?.role);
-        await ctx.reply(`✅ **${user.firstName || user.telegramUsername || user.telegramId}** added as admin (30 days).`, {
+        await ctx.reply(`✅ **${displayName(user)}** added as admin (30 days).`, {
           parse_mode: 'Markdown',
           ...menu
         });
@@ -1259,7 +1259,7 @@ bot.on('text', async (ctx) => {
       ctx.session.step = 'AWAITING_USER_ID_UNDER_ADMIN';
       ctx.session.adminIdForUser = adminId;
       await ctx.reply(
-        `✅ Admin found: ${admin.firstName || admin.telegramUsername || adminId}.\n\nNow send the **Telegram ID** of the **user** to add under this admin.`,
+        `✅ Admin found: ${escMd(admin.firstName) || escMd(admin.telegramUsername) || adminId}.\n\nNow send the **Telegram ID** of the **user** to add under this admin.`,
         { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]) }
       );
       return;
@@ -1303,7 +1303,7 @@ bot.on('text', async (ctx) => {
       targetUser.expiryDate = admin.expiryDate;
       await targetUser.save();
       ctx.session = null;
-      await ctx.reply(`✅ **${targetUser.firstName || targetUser.telegramId}** added under admin **${admin.firstName || adminId}**.`, {
+      await ctx.reply(`✅ **${escMd(targetUser.firstName) || targetUser.telegramId}** added under admin **${escMd(admin.firstName) || adminId}**.`, {
         parse_mode: 'Markdown',
         ...getMainMenu(ctx.state.user?.role)
       });
