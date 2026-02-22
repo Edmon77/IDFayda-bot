@@ -1,5 +1,6 @@
 const RateLimit = require('express-rate-limit');
 const Redis = require('ioredis');
+const logger = require('./logger');
 
 // Create Redis client for rate limiting
 const redisClient = new Redis(process.env.REDIS_URL, {
@@ -66,26 +67,26 @@ const downloadLimiter = RateLimit({
 async function checkUserRateLimit(telegramId, maxRequests = 30, windowMs = 60000) {
   const key = `rl:user:${telegramId}`;
   const now = Date.now();
-  
+
   try {
     const count = await redisClient.incr(key);
     if (count === 1) {
       await redisClient.expire(key, Math.ceil(windowMs / 1000));
     }
-    
+
     const ttl = await redisClient.ttl(key);
     // TTL can be -1 (no expiry) or -2 (key doesn't exist), handle these cases
     const validTtl = ttl > 0 ? ttl : Math.ceil(windowMs / 1000);
     const resetTime = now + (validTtl * 1000);
-    
+
     if (count > maxRequests) {
       return { allowed: false, remaining: 0, resetTime };
     }
-    
+
     return { allowed: true, remaining: Math.max(0, maxRequests - count), resetTime };
   } catch (error) {
     // If Redis fails, allow the request (fail open)
-    console.error('Rate limit check error:', error);
+    logger.error('Rate limit check error:', error);
     return { allowed: true, remaining: maxRequests, resetTime: now + windowMs };
   }
 }

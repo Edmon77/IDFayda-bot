@@ -14,6 +14,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const express = require('express');
+const crypto = require('crypto');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const Captcha = require('2captcha');
@@ -45,11 +46,11 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({ 
+  store: MongoStore.create({
     mongoUrl: process.env.MONGODB_URI,
     ttl: 24 * 60 * 60 // 24 hours
   }),
-  cookie: { 
+  cookie: {
     maxAge: 1000 * 60 * 60 * 24,
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true
@@ -59,8 +60,8 @@ app.set('view engine', 'ejs');
 
 // Health check endpoint (simple – for load balancers)
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
@@ -96,7 +97,16 @@ app.get('/health/ready', async (req, res) => {
 // Apply rate limiting to API routes
 app.use('/api', apiLimiter);
 
-// ---------- Web Dashboard (Super Admin) - same options as bot ----------
+// Login brute-force protection (5 attempts per 15 min per IP)
+const loginLimiter = require('express-rate-limit')({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Too many login attempts. Please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// ---------- Web Dashboard (Admin Management) ----------
 const requireWebAuth = (req, res, next) => {
   if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) return res.status(503).send('Admin dashboard not configured. Set ADMIN_USER and ADMIN_PASS.');
   if (req.session && req.session.admin) return next();
@@ -108,14 +118,28 @@ app.get('/login', (req, res) => {
   }
   res.render('login', { error: req.query.error });
 });
-app.post('/login', (req, res) => {
+app.post('/login', loginLimiter, (req, res) => {
   if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
     return res.status(503).send('Admin dashboard not configured.');
   }
   const { username, password } = req.body;
-  if (username === process.env.ADMIN_USER && password === process.env.ADMIN_PASS) {
-    req.session.admin = true;
-    res.redirect('/dashboard');
+  // Timing-safe comparison to prevent timing attacks
+  const userBuf = Buffer.from(String(username || ''));
+  const passBuf = Buffer.from(String(password || ''));
+  const expectedUserBuf = Buffer.from(process.env.ADMIN_USER);
+  const expectedPassBuf = Buffer.from(process.env.ADMIN_PASS);
+  const userMatch = userBuf.length === expectedUserBuf.length && crypto.timingSafeEqual(userBuf, expectedUserBuf);
+  const passMatch = passBuf.length === expectedPassBuf.length && crypto.timingSafeEqual(passBuf, expectedPassBuf);
+  if (userMatch && passMatch) {
+    // Regenerate session to prevent session fixation
+    req.session.regenerate((err) => {
+      if (err) {
+        logger.error('Session regeneration failed:', err);
+        return res.render('login', { error: 'Server error. Try again.' });
+      }
+      req.session.admin = true;
+      res.redirect('/dashboard');
+    });
   } else {
     res.render('login', { error: 'Invalid credentials' });
   }
@@ -157,7 +181,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   if (!user) {
     return res.redirect('/dashboard?error=user_must_start');
   }
-  if (user.role === 'admin' || user.role === 'superadmin') {
+  if (user.role === 'admin') {
     return res.redirect('/dashboard?error=already_added');
   }
   if (user.addedBy) await User.updateOne({ telegramId: user.addedBy }, { $pull: { subUsers: tid } });
@@ -171,7 +195,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
     await bot.telegram.sendMessage(tid, getPanelTitle('admin') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('admin') });
-  } catch (e) {}
+  } catch (e) { }
   res.redirect('/dashboard');
 });
 app.get('/buyer/:id', requireWebAuth, async (req, res) => {
@@ -190,7 +214,7 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   if (!buyer) return res.redirect('/dashboard');
   let subUser = await User.findOne({ telegramId: tid });
   if (!subUser) return res.redirect(`/buyer/${req.params.id}?error=must_start`);
-  if (subUser.role === 'admin' || subUser.role === 'superadmin') return res.redirect(`/buyer/${req.params.id}?error=already_admin`);
+  if (subUser.role === 'admin') return res.redirect(`/buyer/${req.params.id}?error=already_admin`);
   if ((buyer.subUsers || []).length >= 9) return res.redirect(`/buyer/${req.params.id}?error=full`);
   if ((buyer.subUsers || []).includes(tid)) return res.redirect(`/buyer/${req.params.id}?error=already`);
   buyer.subUsers = buyer.subUsers || [];
@@ -204,7 +228,7 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
     await bot.telegram.sendMessage(tid, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
-  } catch (e) {}
+  } catch (e) { }
   res.redirect(`/buyer/${req.params.id}`);
 });
 app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, async (req, res) => {
@@ -224,7 +248,7 @@ app.post('/buyer/:id/remove', requireWebAuth, async (req, res) => {
   res.redirect('/dashboard');
 });
 app.get('/export-users', requireWebAuth, async (req, res) => {
-  const users = await User.find({});
+  const users = await User.find({}).lean();
   let csv = 'Telegram ID,Role,Name,Username,Expiry,Last Active,Downloads\n';
   users.forEach(u => {
     csv += `${u.telegramId},${u.role},${u.firstName || ''} ${u.lastName || ''},@${u.telegramUsername || ''},${u.expiryDate || ''},${u.lastActive || ''},${u.downloadCount || 0}\n`;
@@ -252,22 +276,22 @@ bot.catch((err, ctx) => {
     'message to delete not found',
     'message is not modified'
   ];
-  
+
   const isIgnorable = ignorableErrors.some(msg => err.message?.toLowerCase().includes(msg.toLowerCase()));
-  
+
   if (isIgnorable) {
     // Log but don't try to send message (user blocked bot or chat doesn't exist)
     logger.warn(`Ignoring Telegram error: ${err.message}`);
     return;
   }
-  
+
   // Log other errors
   logger.error('Bot error:', {
     error: err.message,
     stack: err.stack,
     update: ctx.update
   });
-  
+
   // Try to send error message only if we have a valid context and chat
   if (ctx && ctx.chat && ctx.from) {
     try {
@@ -309,40 +333,52 @@ bot.use(async (ctx, next) => {
 bot.use(async (ctx, next) => {
   try {
     const telegramId = ctx.from.id.toString();
-    
+
     const rateLimit = await checkUserRateLimit(telegramId, 30, 60000);
     if (!rateLimit.allowed) {
       const waitTime = rateLimit.resetTime ? Math.ceil((rateLimit.resetTime - Date.now()) / 1000) : 60;
       return ctx.reply(`⏳ Too many requests. Please wait ${waitTime} seconds.`);
     }
-    
+
     const user = await auth.getUser(telegramId);
-    
+
     if (!user || user.role === 'unauthorized') {
       return ctx.reply(
         `❌ Access Denied\n\nYour Telegram ID: \`${telegramId}\`\n\nSend this ID to an admin to purchase access.`,
         { parse_mode: 'Markdown' }
       );
     }
-    
-    if (user.role !== 'superadmin' && user.expiryDate && new Date(user.expiryDate) < new Date()) {
+
+    if (user.expiryDate && new Date(user.expiryDate) < new Date()) {
       return ctx.reply('❌ Your subscription has expired. Please renew.');
     }
-    
+
     ctx.state.user = user;
-    
+
     // Update user activity asynchronously (don't block)
     User.updateOne(
       { telegramId },
       { $set: { lastActive: new Date() }, $inc: { usageCount: 1 } }
     ).catch(err => logger.error('Failed to update user activity:', err));
-    
+
     return next();
   } catch (error) {
     logger.error('Authorization middleware error:', error);
     return ctx.reply('❌ An error occurred. Please try again.');
   }
 });
+
+// ---------- Role Guard Helper ----------
+function isAdmin(ctx) {
+  return ctx.state.user && ctx.state.user.role === 'admin';
+}
+async function adminGuard(ctx) {
+  if (!isAdmin(ctx)) {
+    try { await ctx.answerCbQuery('❌ Access denied — admin only.'); } catch (_) { }
+    return false;
+  }
+  return true;
+}
 
 // ---------- Start Command – Show Main Menu ----------
 bot.start(async (ctx) => {
@@ -412,81 +448,17 @@ bot.action('main_menu', async (ctx) => {
     try {
       const title = getPanelTitle(ctx.state.user?.role);
       ctx.reply(`${title}\n\nChoose an option:`, { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
-    } catch (_) {}
+    } catch (_) { }
   }
 });
 
-// ---------- Super Admin: Dashboard (Work Summary + Recent Activity paginated) ----------
-bot.action('dashboard_super', async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    const { text, reply_markup } = await renderSuperAdminDashboard(ctx, 1);
-    try {
-      await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup });
-    } catch (editErr) {
-      logger.warn('dashboard_super editMessageText failed, sending new message:', editErr.message);
-      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup });
-    }
-  } catch (error) {
-    logger.error('Dashboard super error:', error?.message || error, error?.stack);
-    try {
-      ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role || 'user') });
-    } catch (_) {}
-  }
-});
 
-async function renderSuperAdminDashboard(ctx, activityPage = 1) {
-  const me = ctx.state.user;
-  const myPdfs = me.downloadCount || 0;
-  const admins = await User.find({ role: 'admin' }).select('telegramId firstName telegramUsername subUsers downloadCount').lean();
-  const allUserIds = admins.flatMap(a => a.subUsers || []);
-  const users = await User.find({ telegramId: { $in: allUserIds } }).select('telegramId downloadCount').lean();
-  const userPdfMap = new Map(users.map(u => [u.telegramId, u.downloadCount || 0]));
-  const totalUsers = allUserIds.length;
-  const usersPdfs = allUserIds.reduce((s, id) => s + (userPdfMap.get(id) || 0), 0);
-  const totalPdfs = myPdfs + admins.reduce((s, a) => s + (a.downloadCount || 0), 0) + usersPdfs;
-  let text = '👑 **YOUR SUPER ADMIN DASHBOARD**\n\n';
-  text += `Super Admin: ${me.firstName || 'N/A'} (@${me.telegramUsername || 'N/A'})\n`;
-  text += `ID: \`${me.telegramId}\`\n\n`;
-  text += '📊 **Work Summary**\n————————————\n';
-  text += `Your Own PDFs: ${myPdfs}\nYour Admins: ${admins.length}\nTotal Users: ${totalUsers}\nUsers' PDFs: ${usersPdfs}\nTotal PDFs: ${totalPdfs}\n————————————\n\n`;
-  const recentAll = await User.find({ $or: [{ role: 'admin' }, { role: 'user' }], telegramId: { $ne: me.telegramId } })
-    .sort({ lastDownload: -1, lastActive: -1 })
-    .select('telegramId firstName telegramUsername role downloadCount lastDownload')
-    .lean();
-  const { items: recentPage, page, totalPages } = paginate(recentAll, activityPage);
-  text += '📅 **Recent Activity** (Page ' + page + '/' + totalPages + ')\n\n';
-  recentPage.forEach(u => {
-    const d = u.lastDownload ? new Date(u.lastDownload).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '–';
-    text += `${d}\n${u.firstName || 'N/A'} (@${u.telegramUsername || 'N/A'}) | PDFs: ${u.downloadCount || 0}\n`;
-  });
-  const btns = [];
-  if (totalPages > 1) {
-    const row = [];
-    if (page > 1) row.push(Markup.button.callback('⏮️ Previous', `recent_activity_page_${page - 1}`));
-    if (page < totalPages) row.push(Markup.button.callback('⏭️ Next', `recent_activity_page_${page + 1}`));
-    if (row.length) btns.push(row);
-  }
-  btns.push([Markup.button.callback('🔙 Back to Main Menu', 'main_menu')]);
-  return { text, reply_markup: { inline_keyboard: btns } };
-}
 
-bot.action(/recent_activity_page_(\d+)/, async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    const page = parseInt(ctx.match[1], 10);
-    const { text, reply_markup } = await renderSuperAdminDashboard(ctx, page);
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup });
-  } catch (e) {
-    logger.error('Recent activity page error:', e);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
-  }
-});
-
-// ---------- Super Admin: View Admins (paginated 10 per page) ----------
+// ---------- Admin: View Admins (paginated 10 per page) ----------
 bot.action(/view_admins_page_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const page = parseInt(ctx.match[1], 10);
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
@@ -540,10 +512,11 @@ bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Remove Admin list (paginated) ----------
+// ---------- Admin: Remove Admin list (paginated) ----------
 bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const page = parseInt(ctx.match[1], 10);
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
@@ -602,10 +575,11 @@ bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Add User Under Admin (start flow) ----------
+// ---------- Admin: Add User Under Admin (start flow) ----------
 bot.action('add_user_under_admin', async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     ctx.session = { ...ctx.session, step: 'AWAITING_ADMIN_ID_FOR_USER' };
     await ctx.editMessageText(
       '📝 **Add User Under Admin**\n\nSend the **Telegram ID** of the **admin** (e.g. \`358404165\`).\n\n_They must already be an admin._',
@@ -617,10 +591,11 @@ bot.action('add_user_under_admin', async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Remove User Under Admin (list admins, then pick user) ----------
+// ---------- Admin: Remove User Under Admin (list admins, then pick user) ----------
 bot.action('remove_user_under_admin', async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, 1);
     if (!pageAdmins.length) {
@@ -644,6 +619,7 @@ bot.action('remove_user_under_admin', async (ctx) => {
 bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const adminId = ctx.match[1];
     const page = parseInt(ctx.match[2], 10);
     const admin = await User.findOne({ telegramId: adminId }).lean();
@@ -678,6 +654,7 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
 bot.action(/remove_under_admin_list_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const page = parseInt(ctx.match[1], 10);
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername').lean();
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
@@ -699,29 +676,30 @@ bot.action(/remove_under_admin_list_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: View Sub Users for a Buyer ----------
+// ---------- Admin: View Sub Users for an Admin ----------
 bot.action(/subusers_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const buyerId = ctx.match[1];
     const buyer = await User.findOne({ telegramId: buyerId }).lean();
     if (!buyer) {
-      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'dashboard_super')]]));
+      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'dashboard_buyer')]]));
     }
     const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
       .lean()
       .exec();
-    
+
     let text = `**Sub Users**\n`;
     text += `_${buyer.firstName || buyer.telegramId} (@${buyer.telegramUsername || 'N/A'})_\n\n`;
     subs.forEach((sub, i) => {
       text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
     });
-    
+
     const buttons = subs.map(sub => [Markup.button.callback(`❌ Remove ${sub.firstName || sub.telegramUsername || sub.telegramId}`, `remove_sub_${buyerId}_${sub.telegramId}`)]);
-    buttons.push([Markup.button.callback('🔙 Back to Dashboard', 'dashboard_super')]);
+    buttons.push([Markup.button.callback('🔙 Back to Dashboard', 'dashboard_buyer')]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
   } catch (error) {
     logger.error('Sub users view error:', error);
@@ -734,13 +712,13 @@ bot.action('dashboard_buyer', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     const buyer = ctx.state.user;
-    
+
     // Optimized: fetch sub-users in one query
     const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
       .lean()
       .exec();
-    
+
     const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
     const buyerOwn = buyer.downloadCount || 0;
     const total = buyerOwn + subDownloads;
@@ -813,7 +791,7 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Manage Users (branch by role: Super Admin vs Admin) ----------
+// ---------- Manage Users (Admin) ----------
 bot.action('manage_users', async (ctx) => {
   try {
     await ctx.answerCbQuery();
@@ -831,20 +809,7 @@ bot.action('manage_users', async (ctx) => {
       }
     };
 
-    if (user.role === 'superadmin') {
-      const title = '👑 **SUPER ADMIN USER MANAGEMENT**\n\n';
-      const sub = `Super Admin: ${user.firstName || 'N/A'} (@${user.telegramUsername || 'N/A'})\nID: \`${user.telegramId}\`\n\nChoose:`;
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('1️⃣ View Admins', 'view_admins_page_1')],
-        [Markup.button.callback('2️⃣ Add Admin', 'add_buyer')],
-        [Markup.button.callback('3️⃣ Remove Admin', 'remove_admin_list_1')],
-        [Markup.button.callback('4️⃣ Add User Under Admin', 'add_user_under_admin')],
-        [Markup.button.callback('5️⃣ Remove User Under Admin', 'remove_user_under_admin')],
-        [Markup.button.callback('6️⃣ 🔙 Back to Main Menu', 'main_menu')]
-      ]);
-      await sendScreen(title + sub, keyboard);
-      return;
-    }
+
 
     if (user.role === 'admin') {
       const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
@@ -864,14 +829,15 @@ bot.action('manage_users', async (ctx) => {
     logger.error('Manage users error:', error?.message || error, error?.stack);
     try {
       ctx.reply('❌ Failed to load users. Please try again.', { ...getMainMenu(ctx.state.user?.role || 'user') });
-    } catch (_) {}
+    } catch (_) { }
   }
 });
 
-// ---------- Super Admin: Add Buyer ----------
+// ---------- Admin: Add Buyer ----------
 bot.action('add_buyer', async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     ctx.session = { ...ctx.session, step: 'AWAITING_BUYER_ID' };
     const keyboard = Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]);
     await ctx.editMessageText(
@@ -884,17 +850,18 @@ bot.action('add_buyer', async (ctx) => {
   }
 });
 
-// ---------- Super Admin: View Pending Users ----------
+// ---------- Admin: View Pending Users ----------
 bot.action('view_pending', async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const pending = await User.find({ role: 'unauthorized' })
       .sort({ lastActive: -1 })
       .limit(30)
       .select('telegramId firstName telegramUsername lastActive')
       .lean()
       .exec();
-    
+
     let text = '📋 **Pending Users** (sent /start, not added yet)\n\n';
     if (!pending.length) {
       text += 'No pending users.';
@@ -917,13 +884,14 @@ bot.action('view_pending', async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Manage a specific buyer ----------
+// ---------- Admin: Manage a specific buyer ----------
 bot.action(/select_admin_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const adminId = ctx.match[1];
     const admin = await User.findOne({ telegramId: adminId }).lean();
-    
+
     if (!admin) {
       return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([
         [Markup.button.callback('🔙 Back', 'manage_users')]
@@ -934,13 +902,13 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
       .select('telegramId firstName telegramUsername downloadCount')
       .lean()
       .exec();
-    
+
     let text = `**Managing:** ${admin.firstName || 'N/A'} (@${admin.telegramUsername || 'N/A'})\n`;
     text += `ID: \`${admin.telegramId}\`\n`;
     text += `PDFs: ${admin.downloadCount || 0} | Users: ${subs.length}\n\n`;
     text += `**Sub‑Users:**\n`;
     subs.forEach((sub, i) => {
-      text += `${i+1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
     });
 
@@ -961,10 +929,11 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Add Sub‑User ----------
+// ---------- Admin: Add Sub‑User ----------
 bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const adminId = ctx.match[1];
     ctx.session = {
       ...ctx.session,
@@ -984,17 +953,18 @@ bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Remove Sub‑User selection ----------
+// ---------- Admin: Remove Sub‑User selection ----------
 bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const adminId = ctx.match[1];
     const admin = await User.findOne({ telegramId: adminId }).lean();
     const subs = await User.find({ telegramId: { $in: admin.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
       .lean()
       .exec();
-    
+
     if (!subs.length) {
       return ctx.editMessageText('❌ This user has no sub‑users.', Markup.inlineKeyboard([
         [Markup.button.callback('🔙 Back', `select_admin_${adminId}`)]
@@ -1018,10 +988,11 @@ bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Remove Buyer (demote to pending) ----------
+// ---------- Admin: Remove Buyer (demote to pending) ----------
 bot.action(/remove_buyer_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const buyerId = ctx.match[1];
     const buyer = await User.findOne({ telegramId: buyerId });
     if (!buyer) {
@@ -1043,10 +1014,11 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Super Admin: Execute removal ----------
+// ---------- Admin: Execute removal ----------
 bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
+    if (!(await adminGuard(ctx))) return;
     const adminId = ctx.match[1];
     const subId = ctx.match[2];
 
@@ -1086,7 +1058,7 @@ bot.action('manage_subs', async (ctx) => {
       text += 'You have no sub‑users yet.';
     } else {
       subs.forEach((sub, i) => {
-        text += `${i+1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+        text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
         text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
       });
     }
@@ -1166,7 +1138,7 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
     text += `PDFs: ${admin.downloadCount || 0} | Users: ${subs.length}\n\n`;
     text += `**Sub‑Users:**\n`;
     subs.forEach((sub, i) => {
-      text += `${i+1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
+      text += `${i + 1}. **${sub.firstName || sub.telegramUsername || sub.telegramId}** (@${sub.telegramUsername || 'N/A'})\n`;
       text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
     });
     const buttons = [
@@ -1212,7 +1184,7 @@ bot.on('text', async (ctx) => {
 
     const text = ctx.message.text.trim();
 
-    // ----- Add Buyer Flow (Super Admin) -----
+    // ----- Add Buyer Flow (Admin) -----
     if (state.step === 'AWAITING_BUYER_ID') {
       const telegramId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(telegramId)) {
@@ -1226,10 +1198,10 @@ bot.on('text', async (ctx) => {
           const menu = getMainMenu(ctx.state.user?.role);
           return ctx.reply('⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.', { ...menu });
         }
-        if (user.role === 'admin' || user.role === 'superadmin') {
+        if (user.role === 'admin') {
           ctx.session = null;
           const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply('❌ This user is already an admin or super admin.', { ...menu });
+          return ctx.reply('❌ This user is already an admin.', { ...menu });
         }
         if (user.addedBy) {
           await User.updateOne({ telegramId: user.addedBy }, { $pull: { subUsers: user.telegramId } });
@@ -1261,7 +1233,7 @@ bot.on('text', async (ctx) => {
       return;
     }
 
-    // ----- Add User Under Admin (Super Admin): step 1 – admin ID -----
+    // ----- Add User Under Admin: step 1 – admin ID -----
     if (state.step === 'AWAITING_ADMIN_ID_FOR_USER') {
       const adminId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(adminId)) {
@@ -1296,8 +1268,8 @@ bot.on('text', async (ctx) => {
       if (!targetUser || targetUser.role === 'unauthorized') {
         return ctx.reply('❌ That user has not started the bot yet. Ask them to send /start first.');
       }
-      if (targetUser.role === 'superadmin' || targetUser.role === 'admin') {
-        return ctx.reply('❌ That ID belongs to an admin/super admin. Choose a regular user.');
+      if (targetUser.role === 'admin') {
+        return ctx.reply('❌ That ID belongs to an admin. Choose a regular user.');
       }
       if ((admin.subUsers || []).includes(userId)) {
         ctx.session = null;
@@ -1335,7 +1307,7 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_SUB_IDENTIFIER') {
       const buyerId = state.adminForAdd || ctx.from.id.toString();
       const buyer = await User.findOne({ telegramId: buyerId });
-      
+
       if (!buyer) {
         ctx.session = null;
         return ctx.reply('❌ Buyer not found. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
@@ -1348,7 +1320,7 @@ bot.on('text', async (ctx) => {
       }
 
       const statusMsg = await ctx.reply('🔍 Looking up user...');
-      
+
       try {
         let subUser = await User.findOne({ telegramId });
         if (!subUser || subUser.role === 'unauthorized') {
@@ -1371,6 +1343,7 @@ bot.on('text', async (ctx) => {
           return ctx.reply('❌ This user is already an employee of this buyer.', { ...menu });
         }
 
+        buyer.subUsers = buyer.subUsers || [];
         buyer.subUsers.push(subUser.telegramId);
         await buyer.save();
 
@@ -1417,7 +1390,7 @@ bot.on('text', async (ctx) => {
       }
 
       const status = await ctx.reply("⏳ Loading...");
-      
+
       let verified = false;
       let lastErr;
       for (let attempt = 1; attempt <= CAPTCHA_VERIFY_ATTEMPTS && !verified; attempt++) {
@@ -1434,7 +1407,7 @@ bot.on('text', async (ctx) => {
           ctx.session.verificationMethod = validation.type || 'FCN';
           ctx.session.step = 'OTP';
           verified = true;
-          await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "Enter the OTP sent to your phone:\n_Send /cancel to return to menu._");
+          await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "Enter the OTP sent to your phone:\n_Send /cancel to return to menu._", { parse_mode: 'Markdown' });
         } catch (e) {
           lastErr = e;
           const errMsg = e.response?.data?.message || e.message || 'Verification failed';
@@ -1503,46 +1476,47 @@ bot.on('text', async (ctx) => {
 
         // Under heavy load (PREFER_QUEUE_PDF=true) skip sync and always queue for controlled concurrency
         let pdfSent = false;
+        let lastSyncError;
         if (!PREFER_QUEUE_PDF) {
-        for (let attempt = 1; attempt <= PDF_SYNC_ATTEMPTS && !pdfSent; attempt++) {
-          try {
-            const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
-              headers: authHeader,
-              responseType: 'text',
-              timeout: 25000
-            });
-            const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
-            const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
-            const filename = `${safeName}.pdf`;
+          for (let attempt = 1; attempt <= PDF_SYNC_ATTEMPTS && !pdfSent; attempt++) {
+            try {
+              const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
+                headers: authHeader,
+                responseType: 'text',
+                timeout: 25000
+              });
+              const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
+              const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
+              const filename = `${safeName}.pdf`;
 
-            await ctx.replyWithDocument({
-              source: pdfBuffer,
-              filename: filename
-            }, { caption: "✨ Your Digital ID is ready!" });
+              await ctx.replyWithDocument({
+                source: pdfBuffer,
+                filename: filename
+              }, { caption: "✨ Your Digital ID is ready!" });
 
-            await User.updateOne(
-              { telegramId: ctx.from.id.toString() },
-              { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
-            );
-            ctx.session = null;
-            pdfSent = true;
+              await User.updateOne(
+                { telegramId: ctx.from.id.toString() },
+                { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
+              );
+              ctx.session = null;
+              pdfSent = true;
 
-            const user = ctx.state.user;
-            const menu = getMainMenu(user.role);
-            const title = getPanelTitle(user.role);
-            await ctx.reply(title + '\n\nChoose an option:', {
-              parse_mode: 'Markdown',
-              ...menu
-            });
-          } catch (syncErr) {
-            lastSyncError = syncErr;
-            if (attempt < PDF_SYNC_ATTEMPTS) {
-              logger.warn(`Sync PDF attempt ${attempt} failed, retrying:`, syncErr.message);
-              await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Retrying PDF fetch...");
-              await new Promise(r => setTimeout(r, PDF_SYNC_RETRY_DELAY_MS));
+              const user = ctx.state.user;
+              const menu = getMainMenu(user.role);
+              const title = getPanelTitle(user.role);
+              await ctx.reply(title + '\n\nChoose an option:', {
+                parse_mode: 'Markdown',
+                ...menu
+              });
+            } catch (syncErr) {
+              lastSyncError = syncErr;
+              if (attempt < PDF_SYNC_ATTEMPTS) {
+                logger.warn(`Sync PDF attempt ${attempt} failed, retrying:`, syncErr.message);
+                await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Retrying PDF fetch...");
+                await new Promise(r => setTimeout(r, PDF_SYNC_RETRY_DELAY_MS));
+              }
             }
           }
-        }
         }
 
         if (pdfSent) {
@@ -1638,7 +1612,7 @@ bot.on('text', async (ctx) => {
 // ---------- Graceful Shutdown ----------
 async function gracefulShutdown(signal) {
   logger.info(`${signal} received, starting graceful shutdown...`);
-  
+
   try {
     await bot.stop(signal);
     await disconnectDB();

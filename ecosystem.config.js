@@ -2,8 +2,8 @@ module.exports = {
   apps: [{
     name: 'fayda-bot',
     script: './index.js',
-    instances: 2, // Run 2 instances for load balancing
-    exec_mode: 'cluster',
+    instances: 1, // Webhook bots must run single instance
+    exec_mode: 'fork',
     max_memory_restart: '500M',
     env: {
       NODE_ENV: 'production',

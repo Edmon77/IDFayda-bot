@@ -15,7 +15,7 @@ async function createAdmin() {
   try {
     // Get Telegram ID from command line
     const telegramId = process.argv[2];
-    
+
     if (!telegramId) {
       console.error('❌ Please provide your Telegram ID');
       console.log('\nUsage: node scripts/create-admin.js YOUR_TELEGRAM_ID');
@@ -36,32 +36,37 @@ async function createAdmin() {
       console.log(`\n⚠️ User with ID ${telegramId} already exists!`);
       console.log(`   Role: ${existingUser.role}`);
       console.log(`   Name: ${existingUser.firstName || 'N/A'}`);
-      
-      // Upgrade to superadmin if not already
-      if (existingUser.role !== 'superadmin') {
-        existingUser.role = 'superadmin';
+
+      // Upgrade to admin if not already
+      if (existingUser.role !== 'admin') {
+        existingUser.role = 'admin';
+        if (!existingUser.expiryDate) {
+          existingUser.expiryDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
+        }
         await existingUser.save();
-        console.log(`\n✅ Updated user to superadmin role!`);
+        console.log(`\n✅ Updated user to admin role!`);
       } else {
-        console.log(`\n✅ User is already a super admin!`);
+        console.log(`\n✅ User is already an admin!`);
       }
       await mongoose.disconnect();
       return;
     }
 
-    // Create new super admin user
+    // Create new admin user
     const adminUser = new User({
       telegramId: telegramId,
-      role: 'superadmin',
-      firstName: 'Super Admin',
+      role: 'admin',
+      firstName: 'Admin',
+      expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
       createdAt: new Date(),
       lastActive: new Date()
     });
 
     await adminUser.save();
-    console.log(`\n✅ Super admin user created successfully!`);
+    console.log(`\n✅ Admin user created successfully!`);
     console.log(`   Telegram ID: ${telegramId}`);
-    console.log(`   Role: superadmin`);
+    console.log(`   Role: admin`);
+    console.log(`   Expiry: 1 year from now`);
     console.log(`\n🎉 You can now use the bot! Send /start to your bot.`);
 
     await mongoose.disconnect();

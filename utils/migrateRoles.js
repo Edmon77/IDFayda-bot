@@ -1,15 +1,17 @@
 /**
  * One-time migration: map old role names to new.
- * Old: admin (super), buyer, sub, pending
- * New: superadmin, admin, user, unauthorized
+ * Old: admin (legacy super), superadmin, buyer, sub, pending
+ * New: admin, user, unauthorized
  */
 const User = require('../models/User');
 const logger = require('../utils/logger');
 
 async function migrateRoles() {
   try {
-    const r = await User.updateMany({ role: 'admin' }, { $set: { role: 'superadmin' } });
-    if (r.modifiedCount) logger.info(`Migrated ${r.modifiedCount} admin → superadmin`);
+    // Migrate superadmin → admin (superadmin role removed)
+    const r0 = await User.updateMany({ role: 'superadmin' }, { $set: { role: 'admin' } });
+    if (r0.modifiedCount) logger.info(`Migrated ${r0.modifiedCount} superadmin → admin`);
+    // Legacy: buyer → admin
     const r2 = await User.updateMany({ role: 'buyer' }, { $set: { role: 'admin' } });
     if (r2.modifiedCount) logger.info(`Migrated ${r2.modifiedCount} buyer → admin`);
     const r3 = await User.updateMany({ role: 'sub' }, { $set: { role: 'user' } });

@@ -3,13 +3,6 @@ const { Markup } = require('telegraf');
 const PER_PAGE = 10;
 
 function getMainMenu(role) {
-  if (role === 'superadmin') {
-    return Markup.inlineKeyboard([
-      [Markup.button.callback('1️⃣ Download PDF', 'download')],
-      [Markup.button.callback('2️⃣ Manage Users', 'manage_users')],
-      [Markup.button.callback('3️⃣ Dashboard', 'dashboard_super')]
-    ]).resize();
-  }
   if (role === 'admin') {
     return Markup.inlineKeyboard([
       [Markup.button.callback('1️⃣ Download PDF', 'download')],
@@ -24,7 +17,6 @@ function getMainMenu(role) {
 }
 
 function getPanelTitle(role) {
-  if (role === 'superadmin') return '📌 SUPER ADMIN PANEL';
   if (role === 'admin') return '📌 ADMIN PANEL';
   return '📌 USER PANEL';
 }
