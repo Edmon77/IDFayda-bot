@@ -41,6 +41,7 @@ const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
 
 // ---------- Express App ----------
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (Railway / reverse proxy)
 
 // Security headers
 app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for EJS inline styles
