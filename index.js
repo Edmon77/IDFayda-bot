@@ -15,8 +15,11 @@ process.on('uncaughtException', (err) => {
 
 const express = require('express');
 const crypto = require('crypto');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
+const { doubleCsrf } = require('csrf-csrf');
 const Captcha = require('2captcha');
 const fayda = require('./utils/faydaClient');
 const { Markup } = require('telegraf');
@@ -40,6 +43,10 @@ const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
 
 // ---------- Express App ----------
 const app = express();
+
+// Security headers
+app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for EJS inline styles
+app.use(cookieParser(process.env.SESSION_SECRET));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(session({
@@ -57,6 +64,30 @@ app.use(session({
   }
 }));
 app.set('view engine', 'ejs');
+
+// CSRF protection for web dashboard forms (double-submit cookie pattern)
+const { generateToken, doubleCsrfProtection } = doubleCsrf({
+  getSecret: () => process.env.SESSION_SECRET,
+  cookieName: '__csrf',
+  cookieOptions: {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+    signed: true
+  },
+  getTokenFromRequest: (req) => req.body._csrf || req.headers['x-csrf-token']
+});
+// Apply CSRF to all POST routes except webhook
+app.use((req, res, next) => {
+  if (req.path === '/webhook') return next();
+  if (req.method === 'POST') return doubleCsrfProtection(req, res, next);
+  next();
+});
+// Make CSRF token available to all EJS views
+app.use((req, res, next) => {
+  res.locals.csrfToken = generateToken(req, res);
+  next();
+});
 
 // Health check endpoint (simple – for load balancers)
 app.get('/health', (req, res) => {
@@ -304,43 +335,34 @@ bot.catch((err, ctx) => {
   }
 });
 
-// ---------- Log User (upsert on every interaction so admins can add them) ----------
+// ---------- Upsert User + Authorization + Rate Limiting (single DB query) ----------
 bot.use(async (ctx, next) => {
-  if (ctx.from) {
-    const telegramId = ctx.from.id.toString();
-    try {
-      await User.findOneAndUpdate(
-        { telegramId },
-        {
-          $set: {
-            firstName: ctx.from.first_name,
-            lastName: ctx.from.last_name,
-            telegramUsername: ctx.from.username,
-            lastActive: new Date()
-          },
-          $setOnInsert: { role: 'unauthorized', isWaitingApproval: true, createdAt: new Date() }
-        },
-        { upsert: true }
-      );
-    } catch (e) {
-      logger.warn('Failed to log user:', e.message);
-    }
-  }
-  return next();
-});
-
-// ---------- Authorization Middleware with Rate Limiting ----------
-bot.use(async (ctx, next) => {
+  if (!ctx.from) return next();
   try {
     const telegramId = ctx.from.id.toString();
 
+    // Rate limit check
     const rateLimit = await checkUserRateLimit(telegramId, 30, 60000);
     if (!rateLimit.allowed) {
       const waitTime = rateLimit.resetTime ? Math.ceil((rateLimit.resetTime - Date.now()) / 1000) : 60;
       return ctx.reply(`⏳ Too many requests. Please wait ${waitTime} seconds.`);
     }
 
-    const user = await auth.getUser(telegramId);
+    // Single DB call: upsert profile + return current doc (replaces two separate queries)
+    const user = await User.findOneAndUpdate(
+      { telegramId },
+      {
+        $set: {
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+          telegramUsername: ctx.from.username,
+          lastActive: new Date()
+        },
+        $inc: { usageCount: 1 },
+        $setOnInsert: { role: 'unauthorized', isWaitingApproval: true, createdAt: new Date() }
+      },
+      { upsert: true, new: true }
+    );
 
     if (!user || user.role === 'unauthorized') {
       return ctx.reply(
@@ -354,13 +376,6 @@ bot.use(async (ctx, next) => {
     }
 
     ctx.state.user = user;
-
-    // Update user activity asynchronously (don't block)
-    User.updateOne(
-      { telegramId },
-      { $set: { lastActive: new Date() }, $inc: { usageCount: 1 } }
-    ).catch(err => logger.error('Failed to update user activity:', err));
-
     return next();
   } catch (error) {
     logger.error('Authorization middleware error:', error);

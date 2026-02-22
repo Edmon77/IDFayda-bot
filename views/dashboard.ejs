@@ -76,6 +76,7 @@
         <div class="card">
             <h2>Add admin</h2>
             <form method="POST" action="/add-buyer" class="form-inline">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <div>
                     <label>Telegram ID</label>
                     <input type="text" name="telegramId" placeholder="5434080792" required>
