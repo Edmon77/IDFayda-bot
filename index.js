@@ -137,6 +137,9 @@ const loginLimiter = require('express-rate-limit')({
 });
 
 // ---------- Web Dashboard (Admin Management) ----------
+// Wrap async route handlers so thrown errors reach the Express error handler
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 const requireWebAuth = (req, res, next) => {
   if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) return res.status(503).send('Admin dashboard not configured. Set ADMIN_USER and ADMIN_PASS.');
   if (req.session && req.session.admin) return next();
@@ -179,7 +182,7 @@ app.get('/logout', (req, res) => {
     res.redirect('/login');
   });
 });
-app.get('/dashboard', requireWebAuth, async (req, res) => {
+app.get('/dashboard', requireWebAuth, asyncHandler(async (req, res) => {
   const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).lean();
   const allSubIds = admins.flatMap(b => b.subUsers || []);
   const subs = await User.find({ telegramId: { $in: allSubIds } }).select('telegramId downloadCount').lean();
@@ -200,12 +203,12 @@ app.get('/dashboard', requireWebAuth, async (req, res) => {
     return { ...b, subDownloads, archived, totalDownloads: (b.downloadCount || 0) + subDownloads + archived };
   });
   res.render('dashboard', { stats, admins: enriched, error: req.query.error });
-});
-app.get('/pending', requireWebAuth, async (req, res) => {
+}));
+app.get('/pending', requireWebAuth, asyncHandler(async (req, res) => {
   const pending = await User.find({ role: 'unauthorized' }).sort({ lastActive: -1 }).limit(50).lean();
   res.render('pending', { pending });
-});
-app.post('/add-buyer', requireWebAuth, async (req, res) => {
+}));
+app.post('/add-buyer', requireWebAuth, asyncHandler(async (req, res) => {
   const { telegramId, expiryDays = 30 } = req.body;
   if (!telegramId || !/^\d+$/.test(String(telegramId).trim())) {
     return res.redirect('/dashboard?error=invalid_id');
@@ -231,8 +234,8 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
     await bot.telegram.sendMessage(tid, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getReplyKeyboard('admin') });
   } catch (e) { logger.warn('Could not notify new admin:', e.message); }
   res.redirect('/dashboard');
-});
-app.get('/buyer/:id', requireWebAuth, async (req, res) => {
+}));
+app.get('/buyer/:id', requireWebAuth, asyncHandler(async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.status(404).send('Not found');
   const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } }).lean();
@@ -240,8 +243,8 @@ app.get('/buyer/:id', requireWebAuth, async (req, res) => {
   const archived = buyer.archivedSubDownloads || 0;
   const totalDownloads = (buyer.downloadCount || 0) + subUsersTotal + archived;
   res.render('buyer-detail', { buyer, subs, buyerOwn: buyer.downloadCount || 0, subUsersTotal, archived, totalDownloads, error: req.query.error });
-});
-app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
+}));
+app.post('/buyer/:id/add-sub', requireWebAuth, asyncHandler(async (req, res) => {
   const { identifier, expiryDays } = req.body;
   const tid = String(identifier).trim().replace(/\s/g, '');
   if (!/^\d+$/.test(tid)) return res.redirect(`/buyer/${req.params.id}?error=invalid_id`);
@@ -269,8 +272,8 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
     await bot.telegram.sendMessage(tid, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
   } catch (e) { logger.warn('Could not notify new sub-user:', e.message); }
   res.redirect(`/buyer/${req.params.id}`);
-});
-app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, async (req, res) => {
+}));
+app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, asyncHandler(async (req, res) => {
   // Archive sub-user downloads before deletion so billing total is preserved
   const sub = await User.findOne({ telegramId: req.params.subId }).select('downloadCount').lean();
   const dlCount = sub?.downloadCount || 0;
@@ -280,10 +283,16 @@ app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, async (req, res) =
   });
   await User.deleteOne({ telegramId: req.params.subId });
   res.redirect(`/buyer/${req.params.buyerId}`);
-});
-app.post('/buyer/:id/remove', requireWebAuth, async (req, res) => {
+}));
+app.post('/buyer/:id/remove', requireWebAuth, asyncHandler(async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/dashboard');
+  // Archive sub-user downloads before demoting admin
+  if (buyer.subUsers && buyer.subUsers.length > 0) {
+    const subs = await User.find({ telegramId: { $in: buyer.subUsers } }).select('downloadCount').lean();
+    const totalSubDl = subs.reduce((sum, s) => sum + (s.downloadCount || 0), 0);
+    buyer.archivedSubDownloads = (buyer.archivedSubDownloads || 0) + totalSubDl;
+  }
   buyer.role = 'unauthorized';
   buyer.addedBy = undefined;
   buyer.expiryDate = undefined;
@@ -291,10 +300,10 @@ app.post('/buyer/:id/remove', requireWebAuth, async (req, res) => {
   await buyer.save();
   await User.updateMany({ addedBy: req.params.id }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
   res.redirect('/dashboard');
-});
+}));
 
 // ---------- Clear Download Summary ----------
-app.post('/buyer/:id/clear-downloads', requireWebAuth, async (req, res) => {
+app.post('/buyer/:id/clear-downloads', requireWebAuth, asyncHandler(async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/dashboard');
   // Reset admin's own + archived counts
@@ -309,10 +318,10 @@ app.post('/buyer/:id/clear-downloads', requireWebAuth, async (req, res) => {
     );
   }
   res.redirect(`/buyer/${req.params.id}`);
-});
+}));
 
 // ---------- Revoked Admins Page ----------
-app.get('/revoked', requireWebAuth, async (req, res) => {
+app.get('/revoked', requireWebAuth, asyncHandler(async (req, res) => {
   const revoked = await User.find({
     role: 'admin',
     expiryDate: { $lt: new Date() }
@@ -327,13 +336,17 @@ app.get('/revoked', requireWebAuth, async (req, res) => {
     return { ...b, subDownloads, archived, totalDownloads: (b.downloadCount || 0) + subDownloads + archived };
   });
   res.render('revoked', { revoked: enriched });
-});
+}));
 
 // ---------- Restore Revoked Admin ----------
-app.post('/buyer/:id/restore', requireWebAuth, async (req, res) => {
+app.post('/buyer/:id/restore', requireWebAuth, asyncHandler(async (req, res) => {
   const { expiryDays = 30 } = req.body;
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/revoked');
+  // Only restore if actually expired
+  if (buyer.expiryDate && new Date(buyer.expiryDate) >= new Date()) {
+    return res.redirect('/revoked');
+  }
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + (parseInt(expiryDays) || 30));
   buyer.expiryDate = expiry;
@@ -362,8 +375,8 @@ app.post('/buyer/:id/restore', requireWebAuth, async (req, res) => {
     }
   }
   res.redirect('/revoked');
-});
-app.get('/export-users', requireWebAuth, async (req, res) => {
+}));
+app.get('/export-users', requireWebAuth, asyncHandler(async (req, res) => {
   const users = await User.find({}).lean();
   function csvEscape(val) {
     const s = String(val ?? '');
@@ -376,7 +389,7 @@ app.get('/export-users', requireWebAuth, async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.attachment('users.csv');
   res.send(csv);
-});
+}));
 
 // ---------- Global Express Error Handler ----------
 app.use((err, req, res, _next) => {
@@ -525,7 +538,7 @@ bot.start(async (ctx) => {
     });
   } catch (error) {
     logger.error('Start command error:', error);
-    ctx.reply('❌ Failed to load menu. Please try again.');
+    ctx.reply('❌ Failed to load menu. Please try again.').catch(() => { });
   }
 });
 
@@ -562,7 +575,7 @@ bot.action('download', async (ctx) => {
     await handleDownload(ctx, true);
   } catch (error) {
     logger.error('Download action error:', error);
-    ctx.reply('❌ Failed to start download. Please try again.');
+    ctx.reply('❌ Failed to start download. Please try again.').catch(() => { });
   }
 });
 
@@ -608,7 +621,7 @@ bot.action(/view_admins_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('View admins error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -637,7 +650,7 @@ bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('View my users error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -668,7 +681,7 @@ bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove admin list error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -700,7 +713,7 @@ bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove my user list error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -716,7 +729,7 @@ bot.action('add_user_under_admin', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add user under admin error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -741,7 +754,7 @@ bot.action('remove_user_under_admin', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove user under admin error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -776,7 +789,7 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove under admin error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
@@ -888,7 +901,7 @@ bot.action('dashboard_buyer', async (ctx) => {
     await handleDashboard(ctx, true);
   } catch (error) {
     logger.error('Dashboard buyer error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.');
+    ctx.reply('❌ Failed to load dashboard. Please try again.').catch(() => { });
   }
 });
 
@@ -927,7 +940,7 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
   } catch (e) {
     logger.error('Dashboard buyer page error:', e);
-    ctx.reply('❌ Failed.');
+    ctx.reply('❌ Failed.').catch(() => { });
   }
 });
 
@@ -971,7 +984,7 @@ bot.action('manage_users', async (ctx) => {
   } catch (error) {
     logger.error('Manage users error:', error?.message || error, error?.stack);
     try {
-      ctx.reply('❌ Failed to load users. Please try again.');
+      ctx.reply('❌ Failed to load users. Please try again.').catch(() => { });
     } catch (_) { }
   }
 });
@@ -989,7 +1002,7 @@ bot.action('add_buyer', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add buyer error:', error);
-    ctx.reply('❌ Failed. Please try again.');
+    ctx.reply('❌ Failed. Please try again.').catch(() => { });
   }
 });
 
@@ -1067,7 +1080,7 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Select admin error:', error);
-    ctx.reply('❌ Failed to load user details. Please try again.');
+    ctx.reply('❌ Failed to load user details. Please try again.').catch(() => { });
   }
 });
 
@@ -1091,7 +1104,7 @@ bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
     );
   } catch (error) {
     logger.error('Add sub admin error:', error);
-    ctx.reply('❌ Failed. Please try again.');
+    ctx.reply('❌ Failed. Please try again.').catch(() => { });
   }
 });
 
@@ -1126,7 +1139,7 @@ bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Remove sub admin error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.');
+    ctx.reply('❌ Failed to load sub-users. Please try again.').catch(() => { });
   }
 });
 
@@ -1140,6 +1153,12 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     if (!buyer) {
       return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Users', 'manage_users')]]));
     }
+    // Archive sub-user downloads before demoting admin
+    if (buyer.subUsers && buyer.subUsers.length > 0) {
+      const subs = await User.find({ telegramId: { $in: buyer.subUsers } }).select('downloadCount').lean();
+      const totalSubDl = subs.reduce((sum, s) => sum + (s.downloadCount || 0), 0);
+      buyer.archivedSubDownloads = (buyer.archivedSubDownloads || 0) + totalSubDl;
+    }
     buyer.role = 'unauthorized';
     buyer.addedBy = undefined;
     buyer.expiryDate = undefined;
@@ -1151,7 +1170,7 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove buyer error:', error);
-    ctx.reply('❌ Failed. Please try again.');
+    ctx.reply('❌ Failed. Please try again.').catch(() => { });
   }
 });
 
@@ -1184,7 +1203,7 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.');
+    ctx.reply('❌ Failed to remove sub-user. Please try again.').catch(() => { });
   }
 });
 
@@ -1224,7 +1243,7 @@ bot.action('manage_subs', async (ctx) => {
     });
   } catch (error) {
     logger.error('Manage subs error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.');
+    ctx.reply('❌ Failed to load sub-users. Please try again.').catch(() => { });
   }
 });
 
@@ -1242,7 +1261,7 @@ bot.action('add_sub_self', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add sub self error:', error);
-    ctx.reply('❌ Failed. Please try again.');
+    ctx.reply('❌ Failed. Please try again.').catch(() => { });
   }
 });
 
@@ -1310,7 +1329,7 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove my sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.');
+    ctx.reply('❌ Failed to remove sub-user. Please try again.').catch(() => { });
   }
 });
 
@@ -1824,7 +1843,7 @@ bot.on('text', async (ctx) => {
     }
   } catch (error) {
     logger.error('Text handler error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
 
