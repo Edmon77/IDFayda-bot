@@ -427,16 +427,11 @@ bot.start(async (ctx) => {
   }
 });
 
-// ---------- Cancel Handler (shared by /cancel command and reply keyboard) ----------
+// ---------- Cancel Handler (shared by /cancel command) ----------
 async function handleCancel(ctx) {
   ctx.session = ctx.session || {};
   ctx.session.step = null;
-  const user = ctx.state.user;
-  const title = getPanelTitle(user.role);
-  await ctx.reply(`❌ Cancelled.\n\n${title}`, {
-    parse_mode: 'Markdown',
-    ...getReplyKeyboard(user.role)
-  });
+  await ctx.reply('❌ Cancelled.');
 }
 
 bot.command('cancel', async (ctx) => {
@@ -454,7 +449,7 @@ async function handleDownload(ctx, isInline) {
   const cancelBtn = Markup.inlineKeyboard([
     [Markup.button.callback('🔙 Cancel', 'main_menu')]
   ]);
-  const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Or press ❌ Cancel to return._";
+  const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Tap Cancel to go back._";
   if (isInline) {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', ...cancelBtn });
   } else {
@@ -618,7 +613,7 @@ bot.action('add_user_under_admin', async (ctx) => {
     ctx.session = { ...ctx.session, step: 'AWAITING_ADMIN_ID_FOR_USER' };
     await ctx.editMessageText(
       '📝 **Add User Under Admin**\n\nSend the **Telegram ID** of the **admin** (e.g. \`358404165\`).\n\n_They must already be an admin._',
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]) }
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'manage_users')]]) }
     );
   } catch (error) {
     logger.error('Add user under admin error:', error);
@@ -772,13 +767,13 @@ async function handleDashboard(ctx, isInline) {
   });
 
   const keyboard = [];
+  // Only add pagination buttons if needed
   if (totalPages > 1) {
     const row = [];
     if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
     if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
     keyboard.push(row);
   }
-  keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
 
   if (isInline) {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
@@ -821,13 +816,13 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
       text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
     });
     const keyboard = [];
+    keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')]);
     if (totalPages > 1) {
       const row = [];
       if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
       if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
       keyboard.push(row);
     }
-    keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
   } catch (e) {
     logger.error('Dashboard buyer page error:', e);
@@ -848,8 +843,7 @@ async function handleManageUsers(ctx, isInline) {
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('👁 View My Users', 'view_my_users_page_1')],
       [Markup.button.callback('➕ Add User', 'add_sub_self')],
-      [Markup.button.callback('🗑 Remove User', 'remove_my_user_list_1')],
-      [Markup.button.callback('🔙 Main Menu', 'main_menu')]
+      [Markup.button.callback('🗑 Remove User', 'remove_my_user_list_1')]
     ]);
     if (isInline) {
       try {
@@ -887,7 +881,7 @@ bot.action('add_buyer', async (ctx) => {
     await ctx.answerCbQuery();
     if (!(await adminGuard(ctx))) return;
     ctx.session = { ...ctx.session, step: 'AWAITING_BUYER_ID' };
-    const keyboard = Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]);
+    const keyboard = Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'manage_users')]]);
     await ctx.editMessageText(
       '📝 **Add Admin**\n\nSend the **Telegram ID** of the person (e.g. \`5434080792\`).\n\n_They must have sent /start first. Default 30 days access. Cancel to go back._',
       { parse_mode: 'Markdown', ...keyboard }
@@ -964,8 +958,7 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
       [Markup.button.callback('➕ Add Sub‑User', `add_sub_admin_${adminId}`)],
       [Markup.button.callback('❌ Remove Sub‑User', `remove_sub_admin_${adminId}`)],
       [Markup.button.callback('🗑 Remove Admin', `remove_buyer_${adminId}`)],
-      [Markup.button.callback('🔙 Back to Users', 'manage_users')],
-      [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+      [Markup.button.callback('🔙 Back to Users', 'manage_users')]
     ];
     await ctx.editMessageText(text, {
       parse_mode: 'Markdown',
@@ -1044,7 +1037,7 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     const buyerId = ctx.match[1];
     const buyer = await User.findOne({ telegramId: buyerId });
     if (!buyer) {
-      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Main Menu', 'main_menu')]]));
+      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Users', 'manage_users')]]));
     }
     buyer.role = 'unauthorized';
     buyer.addedBy = undefined;
@@ -1053,8 +1046,7 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     await buyer.save();
     await User.updateMany({ addedBy: buyerId }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
     await ctx.editMessageText(`✅ Admin removed. They can be added again later.`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Back to Users', 'manage_users')],
-      [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+      [Markup.button.callback('🔙 Back to Users', 'manage_users')]
     ]));
   } catch (error) {
     logger.error('Remove buyer error:', error);
@@ -1073,7 +1065,7 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
     const admin = await User.findOne({ telegramId: adminId });
     if (!admin) {
       return ctx.editMessageText('❌ Admin not found.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Main Menu', 'main_menu')]
+        [Markup.button.callback('🔙 Back to Users', 'manage_users')]
       ]));
     }
 
@@ -1082,8 +1074,7 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
     await User.deleteOne({ telegramId: subId });
 
     await ctx.editMessageText(`✅ Sub‑user removed successfully.`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Back to Admin', `select_admin_${adminId}`)],
-      [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+      [Markup.button.callback('🔙 Back to Admin', `select_admin_${adminId}`)]
     ]));
   } catch (error) {
     logger.error('Remove sub error:', error);
@@ -1119,7 +1110,7 @@ bot.action('manage_subs', async (ctx) => {
         buttons.push([Markup.button.callback(`❌ Remove ${displayName(sub)}`, `remove_my_sub_${sub.telegramId}`)]);
       });
     }
-    buttons.push([Markup.button.callback('🔙 Main Menu', 'main_menu')]);
+    buttons.push([Markup.button.callback('🔙 Manage Users', 'manage_users')]);
 
     await ctx.editMessageText(text, {
       parse_mode: 'Markdown',
@@ -1149,18 +1140,12 @@ bot.action('add_sub_self', async (ctx) => {
   }
 });
 
-// ---------- Cancel Add Sub (buyer: back to Main Menu; admin: back to that buyer) ----------
+// ---------- Cancel Add Sub (go back to Manage Users screen) ----------
 bot.action('cancel_add_sub', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     ctx.session = ctx.session || {}; ctx.session.step = null;
-    const user = ctx.state.user;
-    const menu = getMainMenu(user.role);
-    const title = getPanelTitle(user.role);
-    await ctx.editMessageText(`❌ Cancelled.\n\n${title}`, {
-      parse_mode: 'Markdown',
-      ...menu
-    });
+    await handleManageUsers(ctx, true);
   } catch (error) {
     logger.error('Cancel add sub error:', error);
   }
@@ -1192,8 +1177,7 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
     const buttons = [
       [Markup.button.callback('➕ Add Sub‑User', `add_sub_admin_${adminId}`)],
       [Markup.button.callback('❌ Remove Sub‑User', `remove_sub_admin_${adminId}`)],
-      [Markup.button.callback('🔙 Back to Users', 'manage_users')],
-      [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+      [Markup.button.callback('🔙 Back to Users', 'manage_users')]
     ];
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
   } catch (e) {
@@ -1213,8 +1197,7 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     await User.deleteOne({ telegramId: subId });
 
     await ctx.editMessageText(`✅ Sub‑user removed.`, Markup.inlineKeyboard([
-      [Markup.button.callback('👥 Manage Sub‑Users', 'manage_subs')],
-      [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+      [Markup.button.callback('👥 Manage Sub‑Users', 'manage_subs')]
     ]));
   } catch (error) {
     logger.error('Remove my sub error:', error);
@@ -1228,24 +1211,22 @@ bot.on('text', async (ctx) => {
     const text = ctx.message.text.trim();
     const state = ctx.session;
 
-    // --- Reply Keyboard button routing ---
+    // --- Reply Keyboard button routing (auto-cancels active flows) ---
     switch (text) {
       case BTN.START:
-        if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         return handleDownload(ctx, false);
       case BTN.MANAGE:
-        if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         return handleManageUsers(ctx, false);
       case BTN.DASHBOARD:
-        if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         try {
           return await handleDashboard(ctx, false);
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
           return ctx.reply('❌ Failed to load dashboard.');
         }
-      case BTN.CANCEL:
-        return handleCancel(ctx);
     }
 
     // --- Flow step processing ---
@@ -1325,7 +1306,7 @@ bot.on('text', async (ctx) => {
       ctx.session.adminIdForUser = adminId;
       await ctx.reply(
         `✅ Admin found: ${escMd(admin.firstName) || escMd(admin.telegramUsername) || adminId}.\n\nNow send the **Telegram ID** of the **user** to add under this admin.`,
-        { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'main_menu')]]) }
+        { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Cancel', 'manage_users')]]) }
       );
       return;
     }

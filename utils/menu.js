@@ -6,8 +6,7 @@ const PER_PAGE = 10;
 const BTN = {
   START: '🚀 START',
   MANAGE: '👥 Manage Users',
-  DASHBOARD: '📊 Dashboard',
-  CANCEL: '❌ Cancel'
+  DASHBOARD: '📊 Dashboard'
 };
 
 // Persistent reply keyboard at bottom of chat
@@ -15,12 +14,12 @@ function getReplyKeyboard(role) {
   if (role === 'admin') {
     return Markup.keyboard([
       [BTN.START, BTN.MANAGE],
-      [BTN.DASHBOARD, BTN.CANCEL]
+      [BTN.DASHBOARD]
     ]).resize();
   }
-  // user
+  // user — only START
   return Markup.keyboard([
-    [BTN.START, BTN.CANCEL]
+    [BTN.START]
   ]).resize();
 }
 
