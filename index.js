@@ -321,6 +321,12 @@ bot.catch((err, ctx) => {
     update: ctx.update
   });
 
+  // Don't send error messages for handler timeouts — the handler likely
+  // already completed successfully (e.g., PDF delivered) before the timeout fired.
+  if (err.name === 'TimeoutError' || err.message?.includes('timed out')) {
+    return;
+  }
+
   // Try to send error message only if we have a valid context and chat
   if (ctx && ctx.chat && ctx.from) {
     try {
