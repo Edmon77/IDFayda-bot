@@ -12,13 +12,10 @@
     "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
-    "@telegraf/session": "^2.0.0-beta.7",
     "2captcha": "^3.0.6",
     "axios": "^1.6.7",
     "bull": "^4.12.2",
     "connect-mongo": "^5.1.0",
-    "cookie-parser": "^1.4.7",
-    "csrf-csrf": "^4.0.3",
     "dotenv": "^16.3.1",
     "ejs": "^3.1.9",
     "express": "^4.18.2",

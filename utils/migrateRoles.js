@@ -19,7 +19,7 @@ async function migrateRoles() {
     const r4 = await User.updateMany({ role: 'pending' }, { $set: { role: 'unauthorized', isWaitingApproval: true } });
     if (r4.modifiedCount) logger.info(`Migrated ${r4.modifiedCount} pending → unauthorized`);
     // Sync parentAdmin from addedBy for users
-    const users = await User.find({ role: 'user', addedBy: { $exists: true, $ne: null, $ne: '' } }).select('telegramId addedBy').lean();
+    const users = await User.find({ role: 'user', addedBy: { $exists: true, $nin: [null, ''] } }).select('telegramId addedBy').lean();
     for (const u of users) {
       await User.updateOne({ telegramId: u.telegramId }, { $set: { parentAdmin: u.addedBy } });
     }

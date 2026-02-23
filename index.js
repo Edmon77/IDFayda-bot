@@ -174,8 +174,9 @@ app.post('/login', loginLimiter, (req, res) => {
   }
 });
 app.get('/logout', (req, res) => {
-  req.session.admin = false;
-  res.redirect('/login');
+  req.session.destroy(() => {
+    res.redirect('/login');
+  });
 });
 app.get('/dashboard', requireWebAuth, async (req, res) => {
   const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).lean();
@@ -252,7 +253,10 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   subUser.role = 'user';
   subUser.addedBy = buyer.telegramId;
   subUser.parentAdmin = buyer.telegramId;
-  subUser.expiryDate = buyer.expiryDate;
+  const days = parseInt(expiryDays) || 30;
+  const subExpiry = new Date();
+  subExpiry.setDate(subExpiry.getDate() + days);
+  subUser.expiryDate = subExpiry;
   await subUser.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
@@ -278,9 +282,13 @@ app.post('/buyer/:id/remove', requireWebAuth, async (req, res) => {
 });
 app.get('/export-users', requireWebAuth, async (req, res) => {
   const users = await User.find({}).lean();
+  function csvEscape(val) {
+    const s = String(val ?? '');
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  }
   let csv = 'Telegram ID,Role,Name,Username,Expiry,Last Active,Downloads\n';
   users.forEach(u => {
-    csv += `${u.telegramId},${u.role},${u.firstName || ''} ${u.lastName || ''},@${u.telegramUsername || ''},${u.expiryDate || ''},${u.lastActive || ''},${u.downloadCount || 0}\n`;
+    csv += `${u.telegramId},${u.role},${csvEscape((u.firstName || '') + ' ' + (u.lastName || ''))},@${u.telegramUsername || ''},${u.expiryDate || ''},${u.lastActive || ''},${u.downloadCount || 0}\n`;
   });
   res.setHeader('Content-Type', 'text/csv');
   res.attachment('users.csv');
@@ -289,7 +297,7 @@ app.get('/export-users', requireWebAuth, async (req, res) => {
 
 // ---------- Constants ----------
 const API_BASE = fayda.API_BASE;
-const SITE_KEY = "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
+const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
 const HEADERS = fayda.HEADERS;
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
 const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
@@ -399,7 +407,6 @@ async function adminGuard(ctx) {
   return true;
 }
 
-// ---------- Send Menu Helper (delete previous menu to prevent clutter) ----------
 
 // ---------- Start Command – Show Reply Keyboard ----------
 bot.start(async (ctx) => {

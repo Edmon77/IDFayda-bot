@@ -19,13 +19,13 @@ class RedisStore {
     this.prefix = prefix;
   }
 
-  async increment(key, cb) {
+  async increment(key, windowMs) {
     const redisKey = this.prefix + key;
     const count = await this.client.incr(redisKey);
     if (count === 1) {
-      await this.client.expire(redisKey, Math.ceil((cb.windowMs || 60000) / 1000));
+      await this.client.expire(redisKey, Math.ceil((windowMs || 60000) / 1000));
     }
-    return count;
+    return { totalHits: count, resetTime: new Date(Date.now() + (windowMs || 60000)) };
   }
 
   async decrement(key) {
@@ -53,15 +53,7 @@ const apiLimiter = RateLimit({
   }
 });
 
-// Stricter rate limiter for download endpoint
-const downloadLimiter = RateLimit({
-  store: new RedisStore(redisClient, 'rl:download:'),
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit to 10 downloads per hour per IP
-  message: 'Too many download requests. Please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false
-});
+
 
 // Telegram user rate limiter (using Redis for distributed rate limiting)
 async function checkUserRateLimit(telegramId, maxRequests = 30, windowMs = 60000) {
@@ -93,7 +85,6 @@ async function checkUserRateLimit(telegramId, maxRequests = 30, windowMs = 60000
 
 module.exports = {
   apiLimiter,
-  downloadLimiter,
   checkUserRateLimit,
   redisClient
 };

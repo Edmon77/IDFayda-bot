@@ -11,12 +11,7 @@ const PDF_FETCH_ATTEMPTS = 3;
 const PDF_FETCH_RETRY_DELAY_MS = 2000;
 const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_CONCURRENCY, 10) || 10, 1), 50);
 
-// Create Redis connection for Bull queue
-const Redis = require('ioredis');
-const redis = new Redis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false
-});
+
 
 // Bull queue configuration - use Redis URL directly
 const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
@@ -138,7 +133,6 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
 process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, closing queue...');
   await pdfQueue.close();
-  await redis.quit();
 });
 
 module.exports = pdfQueue;
