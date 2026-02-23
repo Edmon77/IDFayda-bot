@@ -2,6 +2,29 @@ const { Markup } = require('telegraf');
 
 const PER_PAGE = 10;
 
+// Reply keyboard button labels (used for text matching in the text handler)
+const BTN = {
+  START: '🚀 START',
+  MANAGE: '👥 Manage Users',
+  DASHBOARD: '📊 Dashboard',
+  CANCEL: '❌ Cancel'
+};
+
+// Persistent reply keyboard at bottom of chat
+function getReplyKeyboard(role) {
+  if (role === 'admin') {
+    return Markup.keyboard([
+      [BTN.START, BTN.MANAGE],
+      [BTN.DASHBOARD, BTN.CANCEL]
+    ]).resize();
+  }
+  // user
+  return Markup.keyboard([
+    [BTN.START, BTN.CANCEL]
+  ]).resize();
+}
+
+// Inline keyboard for editMessageText calls (sub-menus, status updates)
 function getMainMenu(role) {
   if (role === 'admin') {
     return Markup.inlineKeyboard([
@@ -30,4 +53,4 @@ function paginate(items, page) {
   return { items: slice, page: p, totalPages, total };
 }
 
-module.exports = { getMainMenu, getPanelTitle, PER_PAGE, paginate };
+module.exports = { BTN, getReplyKeyboard, getMainMenu, getPanelTitle, PER_PAGE, paginate };

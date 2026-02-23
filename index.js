@@ -29,7 +29,7 @@ const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
 const { validateFaydaId, validateOTP, escMd, displayName } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
-const { getMainMenu, getPanelTitle, paginate } = require('./utils/menu');
+const { BTN, getReplyKeyboard, getMainMenu, getPanelTitle, paginate } = require('./utils/menu');
 const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
@@ -371,7 +371,7 @@ bot.use(async (ctx, next) => {
     if (!user || user.role === 'unauthorized') {
       return ctx.reply(
         `❌ Access Denied\n\nYour Telegram ID: \`${telegramId}\`\n\nSend this ID to an admin to purchase access.`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown', ...Markup.removeKeyboard() }
       );
     }
 
@@ -410,64 +410,74 @@ async function sendMenu(ctx, text, options) {
   return msg;
 }
 
-// ---------- Start Command – Show Main Menu ----------
+// ---------- Start Command – Show Reply Keyboard ----------
 bot.start(async (ctx) => {
   try {
-    const prevId = ctx.session?.lastMenuMsgId;
-    ctx.session = { lastMenuMsgId: null };
-    if (prevId) ctx.deleteMessage(prevId).catch(() => { });
+    ctx.session = ctx.session || {};
+    ctx.session.step = null;
     const user = ctx.state.user;
     const title = getPanelTitle(user.role);
-    await sendMenu(ctx, title, {
+    await ctx.reply(title, {
       parse_mode: 'Markdown',
-      ...getMainMenu(user.role)
+      ...getReplyKeyboard(user.role)
     });
   } catch (error) {
     logger.error('Start command error:', error);
-    ctx.reply('❌ Failed to load menu. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to load menu. Please try again.');
   }
 });
 
-// ---------- Cancel Command – Clear flow and return to Main Menu ----------
+// ---------- Cancel Handler (shared by /cancel command and reply keyboard) ----------
+async function handleCancel(ctx) {
+  ctx.session = ctx.session || {};
+  ctx.session.step = null;
+  const user = ctx.state.user;
+  const title = getPanelTitle(user.role);
+  await ctx.reply(`❌ Cancelled.\n\n${title}`, {
+    parse_mode: 'Markdown',
+    ...getReplyKeyboard(user.role)
+  });
+}
+
 bot.command('cancel', async (ctx) => {
   try {
-    const prevMenuId = ctx.session?.lastMenuMsgId;
-    ctx.session = { lastMenuMsgId: null };
-    if (prevMenuId) ctx.deleteMessage(prevMenuId).catch(() => { });
-    const user = ctx.state.user;
-    const title = getPanelTitle(user.role);
-    await sendMenu(ctx, `❌ Cancelled.\n\n${title}`, {
-      parse_mode: 'Markdown',
-      ...getMainMenu(user.role)
-    });
+    await handleCancel(ctx);
   } catch (error) {
     logger.error('Cancel command error:', error);
   }
 });
 
-// ---------- Download Action – Start Download Flow ----------
+// ---------- Download Handler (shared by inline button and reply keyboard) ----------
+async function handleDownload(ctx, isInline) {
+  ctx.session = ctx.session || {};
+  ctx.session.step = 'ID';
+  const cancelBtn = Markup.inlineKeyboard([
+    [Markup.button.callback('🔙 Cancel', 'main_menu')]
+  ]);
+  const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Or press ❌ Cancel to return._";
+  if (isInline) {
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...cancelBtn });
+  } else {
+    await ctx.reply(text, { parse_mode: 'Markdown', ...cancelBtn });
+  }
+}
+
 bot.action('download', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    ctx.session = { step: 'ID' };
-    const cancelBtn = Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Cancel', 'main_menu')]
-    ]);
-    await ctx.editMessageText("🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Or tap Cancel to return to menu._", {
-      parse_mode: 'Markdown',
-      ...cancelBtn
-    });
+    await handleDownload(ctx, true);
   } catch (error) {
     logger.error('Download action error:', error);
-    ctx.reply('❌ Failed to start download. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to start download. Please try again.');
   }
 });
 
-// ---------- Back to Main Menu ----------
+// ---------- Back to Main Menu (inline button) ----------
 bot.action('main_menu', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    ctx.session = null;
+    ctx.session = ctx.session || {};
+    ctx.session.step = null;
     const user = ctx.state.user;
     const title = getPanelTitle(user.role);
     await ctx.editMessageText(title, {
@@ -478,7 +488,7 @@ bot.action('main_menu', async (ctx) => {
     logger.error('Main menu action error:', error);
     try {
       const title = getPanelTitle(ctx.state.user?.role);
-      ctx.reply(title, { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
+      ctx.reply(title, { parse_mode: 'Markdown', ...getReplyKeyboard(ctx.state.user?.role) });
     } catch (_) { }
   }
 });
@@ -822,44 +832,48 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Manage Users (Admin) ----------
+// ---------- Manage Users Handler (shared by inline button and reply keyboard) ----------
+async function handleManageUsers(ctx, isInline) {
+  const user = ctx.state.user;
+  if (!user || !user.role) {
+    return ctx.reply('❌ Session error. Send /start again.');
+  }
+
+  if (user.role === 'admin') {
+    const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
+    const sub = `Admin: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('👁 View My Users', 'view_my_users_page_1')],
+      [Markup.button.callback('➕ Add User', 'add_sub_self')],
+      [Markup.button.callback('🗑 Remove User', 'remove_my_user_list_1')],
+      [Markup.button.callback('🔙 Main Menu', 'main_menu')]
+    ]);
+    if (isInline) {
+      try {
+        await ctx.editMessageText(title + sub, { parse_mode: 'Markdown', ...keyboard });
+      } catch (editErr) {
+        logger.warn('manage_users editMessageText failed:', editErr.message);
+        await ctx.reply(title + sub, { parse_mode: 'Markdown', ...keyboard });
+      }
+    } else {
+      await ctx.reply(title + sub, { parse_mode: 'Markdown', ...keyboard });
+    }
+    return;
+  }
+
+  // Non-admin users shouldn't have this button, send welcome
+  const title = getPanelTitle(user.role);
+  await ctx.reply(title, { parse_mode: 'Markdown', ...getReplyKeyboard(user.role) });
+}
+
 bot.action('manage_users', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    const user = ctx.state.user;
-    if (!user || !user.role) {
-      return ctx.reply('❌ Session error. Send /start again.', { ...getMainMenu('user') });
-    }
-
-    const sendScreen = async (text, keyboard) => {
-      try {
-        await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
-      } catch (editErr) {
-        logger.warn('manage_users editMessageText failed, sending new message:', editErr.message);
-        await ctx.reply(text, { parse_mode: 'Markdown', ...keyboard });
-      }
-    };
-
-
-
-    if (user.role === 'admin') {
-      const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
-      const sub = `Admin: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('👁 View My Users', 'view_my_users_page_1')],
-        [Markup.button.callback('➕ Add User', 'add_sub_self')],
-        [Markup.button.callback('🗑 Remove User', 'remove_my_user_list_1')],
-        [Markup.button.callback('🔙 Main Menu', 'main_menu')]
-      ]);
-      await sendScreen(title + sub, keyboard);
-      return;
-    }
-
-    await sendScreen(getPanelTitle(user.role), getMainMenu(user.role));
+    await handleManageUsers(ctx, true);
   } catch (error) {
     logger.error('Manage users error:', error?.message || error, error?.stack);
     try {
-      ctx.reply('❌ Failed to load users. Please try again.', { ...getMainMenu(ctx.state.user?.role || 'user') });
+      ctx.reply('❌ Failed to load users. Please try again.');
     } catch (_) { }
   }
 });
@@ -1136,7 +1150,7 @@ bot.action('add_sub_self', async (ctx) => {
 bot.action('cancel_add_sub', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    ctx.session = null;
+    ctx.session = ctx.session || {}; ctx.session.step = null;
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
     const title = getPanelTitle(user.role);
@@ -1153,7 +1167,7 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
     const adminId = ctx.match[1];
-    ctx.session = null;
+    ctx.session = ctx.session || {}; ctx.session.step = null;
     const admin = await User.findOne({ telegramId: adminId }).lean();
     if (!admin) {
       const menu = getMainMenu(ctx.state.user?.role);
@@ -1205,15 +1219,43 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
   }
 });
 
-// ---------- Text Handler – Download Flow & Add Sub‑User ----------
+// ---------- Text Handler – Reply Keyboard Routing & Download Flow & Add Sub‑User ----------
 bot.on('text', async (ctx) => {
   try {
+    const text = ctx.message.text.trim();
     const state = ctx.session;
+
+    // --- Reply Keyboard button routing ---
+    switch (text) {
+      case BTN.START:
+        if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
+        return handleDownload(ctx, false);
+      case BTN.MANAGE:
+        if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
+        return handleManageUsers(ctx, false);
+      case BTN.DASHBOARD:
+        if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
+        // Dashboard uses inline-only pagination, send a fresh dashboard view
+        try {
+          const user = ctx.state.user;
+          if (user.role !== 'admin') return;
+          const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers downloadCount').lean();
+          let dashText = '📊 **YOUR DASHBOARD**\n\n';
+          dashText += `Total admins: ${admins.length}\n\n`;
+          const keyboard = [[Markup.button.callback('🔙 Main Menu', 'main_menu')]];
+          return ctx.reply(dashText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+        } catch (e) {
+          logger.error('Dashboard from keyboard error:', e);
+          return ctx.reply('❌ Failed to load dashboard.');
+        }
+      case BTN.CANCEL:
+        return handleCancel(ctx);
+    }
+
+    // --- Flow step processing ---
     if (!state || !state.step) {
       return;
     }
-
-    const text = ctx.message.text.trim();
 
     // ----- Add Buyer Flow (Admin) -----
     if (state.step === 'AWAITING_BUYER_ID') {
@@ -1225,14 +1267,14 @@ bot.on('text', async (ctx) => {
       try {
         let user = await User.findOne({ telegramId });
         if (!user) {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             '⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.',
             { ...getMainMenu(ctx.state.user?.role) }
           );
         }
         if (user.role === 'admin') {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             '❌ This user is already an admin.',
             { ...getMainMenu(ctx.state.user?.role) }
@@ -1248,7 +1290,7 @@ bot.on('text', async (ctx) => {
         user.expiryDate = expiryDate;
         user.subUsers = [];
         await user.save();
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         const title = getPanelTitle(ctx.state.user?.role);
         await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           `✅ **${displayName(user)}** added as admin (30 days).\n\n${title}`,
@@ -1262,7 +1304,7 @@ bot.on('text', async (ctx) => {
         }
       } catch (error) {
         logger.error('Add buyer error:', error);
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           '❌ Failed to add buyer. Please try again.',
           { ...getMainMenu(ctx.state.user?.role) }
@@ -1303,7 +1345,7 @@ bot.on('text', async (ctx) => {
       try {
         const admin = await User.findOne({ telegramId: adminId });
         if (!admin) {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             '❌ Admin no longer found. Cancelled.',
             { ...getMainMenu(ctx.state.user?.role) }
@@ -1323,7 +1365,7 @@ bot.on('text', async (ctx) => {
           );
         }
         if ((admin.subUsers || []).includes(userId)) {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             '❌ This user is already under this admin.',
             { ...getMainMenu(ctx.state.user?.role) }
@@ -1346,7 +1388,7 @@ bot.on('text', async (ctx) => {
         targetUser.parentAdmin = adminId;
         targetUser.expiryDate = admin.expiryDate;
         await targetUser.save();
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         const title = getPanelTitle(ctx.state.user?.role);
         await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           `✅ **${escMd(targetUser.firstName) || targetUser.telegramId}** added under admin **${escMd(admin.firstName) || adminId}**.\n\n${title}`,
@@ -1360,7 +1402,7 @@ bot.on('text', async (ctx) => {
         }
       } catch (error) {
         logger.error('Add user under admin error:', error);
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           '❌ Failed to add user. Please try again.',
           { ...getMainMenu(ctx.state.user?.role) }
@@ -1377,7 +1419,7 @@ bot.on('text', async (ctx) => {
       const buyer = await User.findOne({ telegramId: buyerId });
 
       if (!buyer) {
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         return ctx.reply('❌ Buyer not found. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
       }
 
@@ -1392,7 +1434,7 @@ bot.on('text', async (ctx) => {
       try {
         let subUser = await User.findOne({ telegramId });
         if (!subUser) {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             "⚠️ This user hasn't started the bot yet.\n\nAsk them to send /start to the bot first.",
             { ...getMainMenu(ctx.state.user?.role) }
@@ -1400,14 +1442,14 @@ bot.on('text', async (ctx) => {
         }
 
         if ((buyer.subUsers || []).length >= 9) {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             '❌ This buyer already has 9 employees.',
             { ...getMainMenu(ctx.state.user?.role) }
           );
         }
         if ((buyer.subUsers || []).includes(subUser.telegramId)) {
-          ctx.session = null;
+          ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             '❌ This user is already an employee of this buyer.',
             { ...getMainMenu(ctx.state.user?.role) }
@@ -1424,7 +1466,7 @@ bot.on('text', async (ctx) => {
         subUser.expiryDate = buyer.expiryDate;
         await subUser.save();
 
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         const title = getPanelTitle(ctx.state.user?.role);
         await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           `✅ User added successfully!\n\n${title}`,
@@ -1438,7 +1480,7 @@ bot.on('text', async (ctx) => {
         }
       } catch (error) {
         logger.error('Add sub error:', error);
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           '❌ Failed to add employee. Please try again.',
           { ...getMainMenu(ctx.state.user?.role) }
@@ -1490,7 +1532,7 @@ bot.on('text', async (ctx) => {
         const userMsg = /invalid|limit/i.test(rawMsg) ? 'Invalid ID' : (rawMsg || 'Verification failed');
         logger.error("ID verification error after retries:", { error: rawMsg, stack: lastErr?.stack });
         ctx.reply(`❌ Error: ${userMsg}\nTry /start again.`);
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
       }
       return;
     }
@@ -1565,7 +1607,7 @@ bot.on('text', async (ctx) => {
                 { telegramId: ctx.from.id.toString() },
                 { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
               );
-              ctx.session = null;
+              ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
 
               const user = ctx.state.user;
@@ -1622,7 +1664,7 @@ bot.on('text', async (ctx) => {
                 { telegramId: ctx.from.id.toString() },
                 { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
               );
-              ctx.session = null;
+              ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
               const user = ctx.state.user;
               const menu = getMainMenu(user.role);
@@ -1634,13 +1676,13 @@ bot.on('text', async (ctx) => {
                 response: safeResponseForLog(syncError2.response?.data)
               });
               await ctx.reply(`❌ Could not generate PDF: ${syncError2.response?.data?.message || syncError2.message}. Please try /start again.`);
-              ctx.session = null;
+              ctx.session = ctx.session || {}; ctx.session.step = null;
             }
           }
 
           // Only show "queued" message if we didn't send PDF (queue was used)
           if (!pdfSent) {
-            ctx.session = null;
+            ctx.session = ctx.session || {}; ctx.session.step = null;
             const user = ctx.state.user;
             const menu = getMainMenu(user.role);
             const title = getPanelTitle(user.role);
@@ -1661,7 +1703,7 @@ bot.on('text', async (ctx) => {
         } catch (replyError) {
           logger.error('Failed to send error message:', replyError);
         }
-        ctx.session = null;
+        ctx.session = ctx.session || {}; ctx.session.step = null;
       } finally {
         // Always clear processing flag
         if (state) {
