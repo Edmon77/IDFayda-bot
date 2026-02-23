@@ -1213,20 +1213,24 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_BUYER_ID') {
       const telegramId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(telegramId)) {
-        const menu = getMainMenu(ctx.state.user?.role);
-        return ctx.reply('❌ Please enter a numeric Telegram ID (e.g. 5434080792).', { ...menu });
+        return ctx.reply('❌ Please enter a numeric Telegram ID (e.g. 5434080792).', { ...getMainMenu(ctx.state.user?.role) });
       }
+      const statusMsg = await ctx.reply('🔍 Looking up user...');
       try {
         let user = await User.findOne({ telegramId });
-        if (!user || user.role === 'unauthorized') {
+        if (!user) {
           ctx.session = null;
-          const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply('⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.', { ...menu });
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
         }
         if (user.role === 'admin') {
           ctx.session = null;
-          const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply('❌ This user is already an admin.', { ...menu });
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ This user is already an admin.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
         }
         if (user.addedBy) {
           await User.updateOne({ telegramId: user.addedBy }, { $pull: { subUsers: user.telegramId } });
@@ -1239,11 +1243,11 @@ bot.on('text', async (ctx) => {
         user.subUsers = [];
         await user.save();
         ctx.session = null;
-        const menu = getMainMenu(ctx.state.user?.role);
-        await ctx.reply(`✅ **${displayName(user)}** added as admin (30 days).`, {
-          parse_mode: 'Markdown',
-          ...menu
-        });
+        const title = getPanelTitle(ctx.state.user?.role);
+        await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+          `✅ **${displayName(user)}** added as admin (30 days).\n\n${title}`,
+          { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) }
+        );
         try {
           await bot.telegram.sendMessage(user.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
           await bot.telegram.sendMessage(user.telegramId, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getMainMenu('admin') });
@@ -1253,7 +1257,12 @@ bot.on('text', async (ctx) => {
       } catch (error) {
         logger.error('Add buyer error:', error);
         ctx.session = null;
-        ctx.reply('❌ Failed to add buyer. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+        ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+          '❌ Failed to add buyer. Please try again.',
+          { ...getMainMenu(ctx.state.user?.role) }
+        ).catch(() => {
+          ctx.reply('❌ Failed to add buyer. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+        });
       }
       return;
     }
@@ -1281,49 +1290,77 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_USER_ID_UNDER_ADMIN') {
       const userId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(userId)) {
-        return ctx.reply('❌ Please enter a numeric Telegram ID for the user.');
+        return ctx.reply('❌ Please enter a numeric Telegram ID for the user.', { ...getMainMenu(ctx.state.user?.role) });
       }
       const adminId = state.adminIdForUser;
-      const admin = await User.findOne({ telegramId: adminId });
-      if (!admin) {
-        ctx.session = null;
-        return ctx.reply('❌ Admin no longer found. Cancelled.', { ...getMainMenu(ctx.state.user?.role) });
-      }
-      const targetUser = await User.findOne({ telegramId: userId });
-      if (!targetUser) {
-        return ctx.reply('❌ That user has not started the bot yet. Ask them to send /start first.');
-      }
-      if (targetUser.role === 'admin') {
-        return ctx.reply('❌ That ID belongs to an admin. Choose a regular user.');
-      }
-      if ((admin.subUsers || []).includes(userId)) {
-        ctx.session = null;
-        return ctx.reply('❌ This user is already under this admin.', { ...getMainMenu(ctx.state.user?.role) });
-      }
-      if ((admin.subUsers || []).length >= 9) {
-        return ctx.reply('❌ This admin already has 9 users.');
-      }
-      if (targetUser.addedBy) {
-        await User.updateOne({ telegramId: targetUser.addedBy }, { $pull: { subUsers: userId } });
-      }
-      admin.subUsers = admin.subUsers || [];
-      admin.subUsers.push(userId);
-      await admin.save();
-      targetUser.role = 'user';
-      targetUser.addedBy = adminId;
-      targetUser.parentAdmin = adminId;
-      targetUser.expiryDate = admin.expiryDate;
-      await targetUser.save();
-      ctx.session = null;
-      await ctx.reply(`✅ **${escMd(targetUser.firstName) || targetUser.telegramId}** added under admin **${escMd(admin.firstName) || adminId}**.`, {
-        parse_mode: 'Markdown',
-        ...getMainMenu(ctx.state.user?.role)
-      });
+      const statusMsg = await ctx.reply('🔍 Looking up user...');
       try {
-        await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-        await bot.telegram.sendMessage(userId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
-      } catch (e) {
-        logger.warn('Could not send activation to user:', e.message);
+        const admin = await User.findOne({ telegramId: adminId });
+        if (!admin) {
+          ctx.session = null;
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ Admin no longer found. Cancelled.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
+        }
+        const targetUser = await User.findOne({ telegramId: userId });
+        if (!targetUser) {
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ That user has not started the bot yet. Ask them to send /start first.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
+        }
+        if (targetUser.role === 'admin') {
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ That ID belongs to an admin. Choose a regular user.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
+        }
+        if ((admin.subUsers || []).includes(userId)) {
+          ctx.session = null;
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ This user is already under this admin.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
+        }
+        if ((admin.subUsers || []).length >= 9) {
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ This admin already has 9 users.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
+        }
+        if (targetUser.addedBy) {
+          await User.updateOne({ telegramId: targetUser.addedBy }, { $pull: { subUsers: userId } });
+        }
+        admin.subUsers = admin.subUsers || [];
+        admin.subUsers.push(userId);
+        await admin.save();
+        targetUser.role = 'user';
+        targetUser.addedBy = adminId;
+        targetUser.parentAdmin = adminId;
+        targetUser.expiryDate = admin.expiryDate;
+        await targetUser.save();
+        ctx.session = null;
+        const title = getPanelTitle(ctx.state.user?.role);
+        await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+          `✅ **${escMd(targetUser.firstName) || targetUser.telegramId}** added under admin **${escMd(admin.firstName) || adminId}**.\n\n${title}`,
+          { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) }
+        );
+        try {
+          await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
+          await bot.telegram.sendMessage(userId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
+        } catch (e) {
+          logger.warn('Could not send activation to user:', e.message);
+        }
+      } catch (error) {
+        logger.error('Add user under admin error:', error);
+        ctx.session = null;
+        ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+          '❌ Failed to add user. Please try again.',
+          { ...getMainMenu(ctx.state.user?.role) }
+        ).catch(() => {
+          ctx.reply('❌ Failed to add user. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+        });
       }
       return;
     }
@@ -1350,22 +1387,25 @@ bot.on('text', async (ctx) => {
         let subUser = await User.findOne({ telegramId });
         if (!subUser) {
           ctx.session = null;
-          const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply(
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
             "⚠️ This user hasn't started the bot yet.\n\nAsk them to send /start to the bot first.",
-            { ...menu }
+            { ...getMainMenu(ctx.state.user?.role) }
           );
         }
 
         if ((buyer.subUsers || []).length >= 9) {
           ctx.session = null;
-          const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply('❌ This buyer already has 9 employees.', { ...menu });
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ This buyer already has 9 employees.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
         }
         if ((buyer.subUsers || []).includes(subUser.telegramId)) {
           ctx.session = null;
-          const menu = getMainMenu(ctx.state.user?.role);
-          return ctx.reply('❌ This user is already an employee of this buyer.', { ...menu });
+          return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+            '❌ This user is already an employee of this buyer.',
+            { ...getMainMenu(ctx.state.user?.role) }
+          );
         }
 
         buyer.subUsers = buyer.subUsers || [];
@@ -1378,21 +1418,12 @@ bot.on('text', async (ctx) => {
         subUser.expiryDate = buyer.expiryDate;
         await subUser.save();
 
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          statusMsg.message_id,
-          null,
-          `✅ User added successfully!\n\nThey can now use the bot.`
-        );
-
         ctx.session = null;
-        const user = ctx.state.user;
-        const menu = getMainMenu(user.role);
-        const title = getPanelTitle(user.role);
-        await ctx.reply(title, {
-          parse_mode: 'Markdown',
-          ...menu
-        });
+        const title = getPanelTitle(ctx.state.user?.role);
+        await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+          `✅ User added successfully!\n\n${title}`,
+          { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) }
+        );
         try {
           await bot.telegram.sendMessage(subUser.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
           await bot.telegram.sendMessage(subUser.telegramId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
@@ -1402,7 +1433,12 @@ bot.on('text', async (ctx) => {
       } catch (error) {
         logger.error('Add sub error:', error);
         ctx.session = null;
-        ctx.reply('❌ Failed to add employee. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+        ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+          '❌ Failed to add employee. Please try again.',
+          { ...getMainMenu(ctx.state.user?.role) }
+        ).catch(() => {
+          ctx.reply('❌ Failed to add employee. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+        });
       }
       return;
     }
