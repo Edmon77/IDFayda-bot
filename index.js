@@ -223,7 +223,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   await user.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-    await bot.telegram.sendMessage(tid, getPanelTitle('admin') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('admin') });
+    await bot.telegram.sendMessage(tid, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getMainMenu('admin') });
   } catch (e) { }
   res.redirect('/dashboard');
 });
@@ -256,7 +256,7 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   await subUser.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-    await bot.telegram.sendMessage(tid, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
+    await bot.telegram.sendMessage(tid, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
   } catch (e) { }
   res.redirect(`/buyer/${req.params.id}`);
 });
@@ -324,7 +324,7 @@ bot.catch((err, ctx) => {
   // Try to send error message only if we have a valid context and chat
   if (ctx && ctx.chat && ctx.from) {
     try {
-      ctx.reply('❌ An error occurred. Please try again later or contact support.').catch(() => {
+      ctx.reply('❌ An error occurred. Please try again later or contact support.', { ...getMainMenu(ctx.state?.user?.role || 'user') }).catch(() => {
         // Silently ignore if we can't send (user blocked, etc.)
       });
     } catch (e) {
@@ -377,7 +377,7 @@ bot.use(async (ctx, next) => {
     return next();
   } catch (error) {
     logger.error('Authorization middleware error:', error);
-    return ctx.reply('❌ An error occurred. Please try again.');
+    return ctx.reply('❌ An error occurred. Please try again.', { ...getMainMenu(ctx.state?.user?.role || 'user') });
   }
 });
 
@@ -393,33 +393,44 @@ async function adminGuard(ctx) {
   return true;
 }
 
+// ---------- Send Menu Helper (delete previous menu to prevent clutter) ----------
+async function sendMenu(ctx, text, options) {
+  const prevId = ctx.session?.lastMenuMsgId;
+  if (prevId) {
+    ctx.deleteMessage(prevId).catch(() => { });
+  }
+  const msg = await ctx.reply(text, options);
+  if (ctx.session) ctx.session.lastMenuMsgId = msg.message_id;
+  return msg;
+}
+
 // ---------- Start Command – Show Main Menu ----------
 bot.start(async (ctx) => {
   try {
-    ctx.session = null;
+    ctx.session = { lastMenuMsgId: null };
     const user = ctx.state.user;
-    const menu = getMainMenu(user.role);
     const title = getPanelTitle(user.role);
-    await ctx.reply(`${title}\n\nChoose an option:`, {
+    await sendMenu(ctx, title, {
       parse_mode: 'Markdown',
-      ...menu
+      ...getMainMenu(user.role)
     });
   } catch (error) {
     logger.error('Start command error:', error);
-    ctx.reply('❌ Failed to load menu. Please try again.');
+    ctx.reply('❌ Failed to load menu. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
   }
 });
 
 // ---------- Cancel Command – Clear flow and return to Main Menu ----------
 bot.command('cancel', async (ctx) => {
   try {
-    ctx.session = null;
+    const prevMenuId = ctx.session?.lastMenuMsgId;
+    ctx.session = { lastMenuMsgId: null };
+    if (prevMenuId) ctx.deleteMessage(prevMenuId).catch(() => { });
     const user = ctx.state.user;
-    const menu = getMainMenu(user.role);
     const title = getPanelTitle(user.role);
-    await ctx.reply('❌ Cancelled. Back to **Main Menu**.\n\n' + title + '\n\nChoose an option:', {
+    await sendMenu(ctx, `❌ Cancelled.\n\n${title}`, {
       parse_mode: 'Markdown',
-      ...menu
+      ...getMainMenu(user.role)
     });
   } catch (error) {
     logger.error('Cancel command error:', error);
@@ -434,7 +445,7 @@ bot.action('download', async (ctx) => {
     const cancelBtn = Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Cancel', 'main_menu')]
     ]);
-    await ctx.editMessageText("🏁 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Or tap Cancel to return to menu._", {
+    await ctx.editMessageText("🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Or tap Cancel to return to menu._", {
       parse_mode: 'Markdown',
       ...cancelBtn
     });
@@ -450,17 +461,16 @@ bot.action('main_menu', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.session = null;
     const user = ctx.state.user;
-    const menu = getMainMenu(user.role);
     const title = getPanelTitle(user.role);
-    await ctx.editMessageText(`${title}\n\nChoose an option:`, {
+    await ctx.editMessageText(title, {
       parse_mode: 'Markdown',
-      ...menu
+      ...getMainMenu(user.role)
     });
   } catch (error) {
     logger.error('Main menu action error:', error);
     try {
       const title = getPanelTitle(ctx.state.user?.role);
-      ctx.reply(`${title}\n\nChoose an option:`, { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
+      ctx.reply(title, { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) });
     } catch (_) { }
   }
 });
@@ -828,16 +838,16 @@ bot.action('manage_users', async (ctx) => {
       const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
       const sub = `Admin: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('1️⃣ View My Users', 'view_my_users_page_1')],
-        [Markup.button.callback('2️⃣ Add User', 'add_sub_self')],
-        [Markup.button.callback('3️⃣ Remove User', 'remove_my_user_list_1')],
-        [Markup.button.callback('4️⃣ 🔙 Back to Main Menu', 'main_menu')]
+        [Markup.button.callback('👁 View My Users', 'view_my_users_page_1')],
+        [Markup.button.callback('➕ Add User', 'add_sub_self')],
+        [Markup.button.callback('🗑 Remove User', 'remove_my_user_list_1')],
+        [Markup.button.callback('🔙 Main Menu', 'main_menu')]
       ]);
       await sendScreen(title + sub, keyboard);
       return;
     }
 
-    await sendScreen(getPanelTitle(user.role) + '\n\nChoose an option:', getMainMenu(user.role));
+    await sendScreen(getPanelTitle(user.role), getMainMenu(user.role));
   } catch (error) {
     logger.error('Manage users error:', error?.message || error, error?.stack);
     try {
@@ -1122,7 +1132,7 @@ bot.action('cancel_add_sub', async (ctx) => {
     const user = ctx.state.user;
     const menu = getMainMenu(user.role);
     const title = getPanelTitle(user.role);
-    await ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.\n\n' + title + '\n\nChoose an option:', {
+    await ctx.editMessageText(`❌ Cancelled.\n\n${title}`, {
       parse_mode: 'Markdown',
       ...menu
     });
@@ -1140,7 +1150,7 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
     if (!admin) {
       const menu = getMainMenu(ctx.state.user?.role);
       const title = getPanelTitle(ctx.state.user?.role);
-      return ctx.editMessageText('❌ Cancelled. Back to **Main Menu**.\n\n' + title + '\n\nChoose an option:', { parse_mode: 'Markdown', ...menu });
+      return ctx.editMessageText(`❌ Cancelled.\n\n${title}`, { parse_mode: 'Markdown', ...menu });
     }
     const subs = await User.find({ telegramId: { $in: admin.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
@@ -1234,7 +1244,7 @@ bot.on('text', async (ctx) => {
         });
         try {
           await bot.telegram.sendMessage(user.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-          await bot.telegram.sendMessage(user.telegramId, getPanelTitle('admin') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('admin') });
+          await bot.telegram.sendMessage(user.telegramId, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getMainMenu('admin') });
         } catch (e) {
           logger.warn('Could not send menu to new admin:', e.message);
         }
@@ -1309,7 +1319,7 @@ bot.on('text', async (ctx) => {
       });
       try {
         await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-        await bot.telegram.sendMessage(userId, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
+        await bot.telegram.sendMessage(userId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
       } catch (e) {
         logger.warn('Could not send activation to user:', e.message);
       }
@@ -1377,13 +1387,13 @@ bot.on('text', async (ctx) => {
         const user = ctx.state.user;
         const menu = getMainMenu(user.role);
         const title = getPanelTitle(user.role);
-        await ctx.reply(title + '\n\nChoose an option:', {
+        await ctx.reply(title, {
           parse_mode: 'Markdown',
           ...menu
         });
         try {
           await bot.telegram.sendMessage(subUser.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-          await bot.telegram.sendMessage(subUser.telegramId, getPanelTitle('user') + '\n\nChoose an option:', { parse_mode: 'Markdown', ...getMainMenu('user') });
+          await bot.telegram.sendMessage(subUser.telegramId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
         } catch (e) {
           logger.warn('Could not send menu to new user:', e.message);
         }
@@ -1517,7 +1527,7 @@ bot.on('text', async (ctx) => {
               const user = ctx.state.user;
               const menu = getMainMenu(user.role);
               const title = getPanelTitle(user.role);
-              await ctx.reply(title + '\n\nChoose an option:', {
+              await ctx.reply(title, {
                 parse_mode: 'Markdown',
                 ...menu
               });
@@ -1573,7 +1583,7 @@ bot.on('text', async (ctx) => {
               const user = ctx.state.user;
               const menu = getMainMenu(user.role);
               const title = getPanelTitle(user.role);
-              await ctx.reply(title + '\n\nChoose an option:', { parse_mode: 'Markdown', ...menu });
+              await ctx.reply(title, { parse_mode: 'Markdown', ...menu });
             } catch (syncError2) {
               logger.error('Synchronous PDF processing failed:', {
                 error: syncError2.message,
@@ -1590,7 +1600,7 @@ bot.on('text', async (ctx) => {
             const user = ctx.state.user;
             const menu = getMainMenu(user.role);
             const title = getPanelTitle(user.role);
-            await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.\n\n' + title + '\n\nChoose an option:', {
+            await ctx.reply(`✅ Your request has been queued. You will receive your PDF shortly.\n\n${title}`, {
               parse_mode: 'Markdown',
               ...menu
             });
@@ -1618,7 +1628,7 @@ bot.on('text', async (ctx) => {
     }
   } catch (error) {
     logger.error('Text handler error:', error);
-    ctx.reply('❌ An error occurred. Please try again.');
+    ctx.reply('❌ An error occurred. Please try again.', { ...getMainMenu(ctx.state?.user?.role || 'user') });
   }
 });
 

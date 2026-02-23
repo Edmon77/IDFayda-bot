@@ -1,8 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Admin — Fayda Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -10,16 +14,24 @@
             box-sizing: border-box;
         }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #0f0f12;
-            color: #e4e4e7;
-            padding: 1.5rem;
-            line-height: 1.5;
+        :root {
+            --bg: #0f0f12;
+            --surface: #18181c;
+            --surface2: #1f1f24;
+            --text: #e4e4e7;
+            --muted: #a1a1aa;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --danger: #ef4444;
+            --radius: 12px;
         }
 
-        .header {
-            padding: 1rem 0;
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 1.5rem;
+            line-height: 1.5;
         }
 
         .container {
@@ -27,32 +39,56 @@
             margin: 0 auto;
         }
 
+        /* Back link */
         .back {
-            color: #a1a1aa;
+            color: var(--muted);
             text-decoration: none;
-            font-size: 0.875rem;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            transition: color 0.15s;
+            margin-bottom: 1rem;
         }
 
         .back:hover {
-            color: #e4e4e7;
+            color: var(--text);
         }
 
+        /* Page header */
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .page-header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        /* Card */
         .card {
-            background: #18181c;
+            background: var(--surface);
             border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 12px;
+            border-radius: var(--radius);
             padding: 1.5rem;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1.25rem;
         }
 
         .card h2 {
             font-size: 1rem;
+            font-weight: 600;
             margin-bottom: 1rem;
         }
 
+        /* Info */
         .info {
-            font-size: 0.875rem;
-            color: #a1a1aa;
+            font-size: 0.85rem;
+            color: var(--muted);
         }
 
         .info p {
@@ -60,59 +96,80 @@
         }
 
         .info strong {
-            color: #e4e4e7;
+            color: var(--text);
         }
 
+        /* Forms */
         .form-group {
             margin-bottom: 1rem;
         }
 
         .form-group label {
             display: block;
-            font-size: 0.8rem;
-            color: #a1a1aa;
-            margin-bottom: 0.35rem;
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-bottom: 0.3rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
 
         .form-group input {
             width: 100%;
             max-width: 240px;
             padding: 0.5rem 0.75rem;
-            background: #1f1f24;
+            background: var(--surface2);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 8px;
-            color: #e4e4e7;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+            transition: border-color 0.15s;
         }
 
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Buttons */
         .btn {
             display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
             padding: 0.5rem 1rem;
             border-radius: 8px;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             font-weight: 500;
             text-decoration: none;
             border: none;
             cursor: pointer;
+            font-family: inherit;
+            transition: all 0.15s;
         }
 
         .btn-primary {
-            background: #6366f1;
+            background: var(--accent);
             color: white;
         }
 
         .btn-primary:hover {
-            background: #818cf8;
+            background: var(--accent-hover);
+            transform: translateY(-1px);
         }
 
         .btn-danger {
-            background: #ef4444;
+            background: var(--danger);
             color: white;
-            margin-left: 0.5rem;
         }
 
+        .btn-danger:hover {
+            opacity: 0.9;
+        }
+
+        /* Sub-user items */
         .sub-item {
-            background: #1f1f24;
-            border-radius: 8px;
+            background: var(--surface2);
+            border-radius: 10px;
             padding: 1rem;
             margin-bottom: 0.5rem;
             display: flex;
@@ -120,35 +177,65 @@
             align-items: center;
             flex-wrap: wrap;
             gap: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.04);
         }
 
         .sub-item span {
-            font-size: 0.875rem;
+            font-size: 0.85rem;
         }
 
+        .sub-item strong {
+            color: var(--text);
+        }
+
+        .sub-info {
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        /* Messages */
         .msg.err {
-            color: #ef4444;
-            font-size: 0.875rem;
+            color: var(--danger);
+            font-size: 0.85rem;
             margin-top: 0.5rem;
+            background: rgba(239, 68, 68, 0.08);
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            display: inline-block;
+        }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+
+            .form-group input {
+                max-width: 100%;
+            }
+
+            .sub-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
         }
     </style>
 </head>
 
 <body>
-    <div class="header"><a href="/dashboard" class="back">← Dashboard</a></div>
     <div class="container">
-        <div
-            style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
-            <h1 style="font-size: 1.25rem;">Manage admin</h1>
+        <a href="/dashboard" class="back">← Dashboard</a>
+        <div class="page-header">
+            <h1>⚙️ Manage Admin</h1>
             <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove" style="display: inline;"
                 onsubmit="return confirm('Remove this admin? Their users will be unassigned.');">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button type="submit" class="btn btn-danger">Remove admin</button>
+                <button type="submit" class="btn btn-danger">🗑 Remove Admin</button>
             </form>
         </div>
 
         <div class="card">
-            <h2>Admin info</h2>
+            <h2>📋 Admin Info</h2>
             <div class="info">
                 <p><strong>Telegram ID:</strong>
                     <%= buyer.telegramId %>
@@ -168,7 +255,7 @@
             </div>
         </div>
         <div class="card">
-            <h2>Download summary</h2>
+            <h2>📊 Download Summary</h2>
             <div class="info">
                 <p><strong>Own PDFs:</strong>
                     <%= buyerOwn %>
@@ -182,18 +269,18 @@
             </div>
         </div>
         <div class="card">
-            <h2>Add user</h2>
+            <h2>➕ Add User</h2>
             <form method="POST" action="/buyer/<%= buyer.telegramId %>/add-sub">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <div class="form-group">
                     <label>Telegram ID (user must have sent /start first)</label>
-                    <input type="text" name="identifier" placeholder="5434080792" required>
+                    <input type="text" name="identifier" placeholder="5434080792" required autocomplete="off">
                 </div>
                 <div class="form-group">
                     <label>Expiry (days)</label>
                     <input type="number" name="expiryDays" value="30" required>
                 </div>
-                <button type="submit" class="btn btn-primary">Add user</button>
+                <button type="submit" class="btn btn-primary">Add User</button>
                 <% if (typeof error !=='undefined' && error) { %>
                     <p class="msg err">
                         <%= error==='must_start' ? 'User must send /start first' : error==='invalid_id' ? 'Invalid ID' :
@@ -204,7 +291,7 @@
             </form>
         </div>
         <div class="card">
-            <h2>Users (<%= subs.length %>)</h2>
+            <h2>👥 Users (<%= subs.length %>)</h2>
             <% if (subs.length===0) { %>
                 <p class="info">No users yet.</p>
                 <% } %>
@@ -214,7 +301,8 @@
                                 <strong>
                                     <%= sub.firstName || sub.telegramUsername || sub.telegramId %>
                                 </strong><br>
-                                ID: <%= sub.telegramId %> · PDFs: <%= sub.downloadCount || 0 %>
+                                <span class="sub-info">ID: <%= sub.telegramId %> · PDFs: <%= sub.downloadCount || 0 %>
+                                            </span>
                             </span>
                             <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove-sub/<%= sub.telegramId %>"
                                 style="display: inline;">

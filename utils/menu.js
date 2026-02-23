@@ -5,20 +5,20 @@ const PER_PAGE = 10;
 function getMainMenu(role) {
   if (role === 'admin') {
     return Markup.inlineKeyboard([
-      [Markup.button.callback('1️⃣ Download PDF', 'download')],
-      [Markup.button.callback('2️⃣ Manage Users', 'manage_users')],
-      [Markup.button.callback('3️⃣ Dashboard', 'dashboard_buyer')]
+      [Markup.button.callback('🚀 START', 'download')],
+      [Markup.button.callback('👥 Manage Users', 'manage_users')],
+      [Markup.button.callback('📊 Dashboard', 'dashboard_buyer')]
     ]).resize();
   }
   // user
   return Markup.inlineKeyboard([
-    [Markup.button.callback('1️⃣ Download PDF', 'download')]
+    [Markup.button.callback('🚀 START', 'download')]
   ]).resize();
 }
 
 function getPanelTitle(role) {
-  if (role === 'admin') return '📌 ADMIN PANEL';
-  return '📌 USER PANEL';
+  const roleLabel = role === 'admin' ? '_Admin_' : '_User_';
+  return `📌 **WELCOME TO FAYDA BOT**\n${roleLabel} ・ Choose an option:`;
 }
 
 function paginate(items, page) {

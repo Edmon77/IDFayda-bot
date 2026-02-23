@@ -1,100 +1,450 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Super Admin Dashboard — Fayda Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        :root { --bg: #0f0f12; --surface: #18181c; --surface2: #1f1f24; --text: #e4e4e7; --muted: #a1a1aa; --accent: #6366f1; --accent-hover: #818cf8; --danger: #ef4444; --warning: #f59e0b; --success: #22c55e; }
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5; }
-        .header { background: var(--surface); border-bottom: 1px solid rgba(255,255,255,0.06); padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
-        .header h1 { font-size: 1.25rem; font-weight: 600; }
-        .header nav { display: flex; gap: 0.75rem; align-items: center; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
-        .badge { font-size: 0.7rem; background: var(--accent); color: white; padding: 0.2rem 0.5rem; border-radius: 999px; font-weight: 500; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-        .stat-card { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1.25rem; }
-        .stat-card h3 { color: var(--muted); font-size: 0.8rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
-        .stat-card .number { font-size: 1.75rem; font-weight: 700; color: var(--text); }
-        .card { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
-        .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--text); }
-        .form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; }
-        .form-inline label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
-        .form-inline input { background: var(--surface2); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.9rem; width: 160px; }
-        .form-inline input:focus { outline: none; border-color: var(--accent); }
-        .btn { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; text-decoration: none; border: none; cursor: pointer; transition: background 0.15s; }
-        .btn-primary { background: var(--accent); color: white; }
-        .btn-primary:hover { background: var(--accent-hover); }
-        .btn-ghost { background: transparent; color: var(--muted); }
-        .btn-ghost:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-        .btn-danger { background: var(--danger); color: white; }
-        .btn-danger:hover { opacity: 0.9; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-        th { text-align: left; padding: 0.75rem 1rem; color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.06); }
-        td { padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
-        tr:hover td { background: rgba(255,255,255,0.02); }
-        .expiring { color: var(--warning); }
-        .expired { color: var(--danger); }
-        .msg { font-size: 0.875rem; margin-top: 0.5rem; }
-        .msg.err { color: var(--danger); }
-        .toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0f0f12;
+            --surface: #18181c;
+            --surface2: #1f1f24;
+            --text: #e4e4e7;
+            --muted: #a1a1aa;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --success: #22c55e;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        /* Header */
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header nav {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 0.65rem;
+            background: var(--accent);
+            color: white;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        /* Stats Grid */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            transition: transform 0.15s, border-color 0.15s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .stat-card h3 {
+            color: var(--muted);
+            font-size: 0.7rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .number {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+
+        /* Card */
+        .card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        /* Forms */
+        .form-inline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            gap: 0.75rem;
+        }
+
+        .form-inline label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .form-inline input {
+            background: var(--surface2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            color: var(--text);
+            font-size: 0.9rem;
+            font-family: inherit;
+            width: 160px;
+            transition: border-color 0.15s;
+        }
+
+        .form-inline input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--muted);
+        }
+
+        .btn-ghost:hover {
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            opacity: 0.9;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            color: var(--muted);
+            font-weight: 500;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .expiring {
+            color: var(--warning);
+        }
+
+        .expired {
+            color: var(--danger);
+        }
+
+        /* Feedback */
+        .msg {
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+
+        .msg.err {
+            color: var(--danger);
+        }
+
+        /* Toolbar */
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 2rem 1rem 1rem;
+            color: var(--muted);
+            font-size: 0.7rem;
+            letter-spacing: 0.03em;
+        }
+
+        /* ===== Mobile Responsive ===== */
+        @media (max-width: 768px) {
+            .header {
+                padding: 0.75rem 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.1rem;
+            }
+
+            .container {
+                padding: 1rem;
+            }
+
+            .stats {
+                grid-template-columns: 1fr 1fr;
+                gap: 0.75rem;
+            }
+
+            .stat-card {
+                padding: 1rem;
+            }
+
+            .stat-card .number {
+                font-size: 1.5rem;
+            }
+
+            /* Table → Card Layout */
+            table,
+            thead,
+            tbody,
+            th,
+            td,
+            tr {
+                display: block;
+            }
+
+            thead {
+                display: none;
+            }
+
+            tbody tr {
+                background: var(--surface2);
+                border-radius: 10px;
+                padding: 1rem;
+                margin-bottom: 0.75rem;
+                border: 1px solid rgba(255, 255, 255, 0.04);
+            }
+
+            tbody tr:hover td {
+                background: transparent;
+            }
+
+            td {
+                padding: 0.25rem 0;
+                border: none;
+                font-size: 0.85rem;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            td::before {
+                content: attr(data-label);
+                font-weight: 500;
+                color: var(--muted);
+                font-size: 0.7rem;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                flex-shrink: 0;
+                margin-right: 0.75rem;
+            }
+
+            td:last-child {
+                margin-top: 0.5rem;
+                justify-content: flex-end;
+            }
+
+            /* Form */
+            .form-inline {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .form-inline input {
+                width: 100%;
+            }
+
+            .btn {
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .stats {
+                grid-template-columns: 1fr;
+            }
+
+            .header nav {
+                width: 100%;
+                justify-content: space-between;
+            }
+        }
     </style>
 </head>
+
 <body>
     <header class="header">
         <h1>Fayda Bot <span class="badge">Super Admin</span></h1>
         <nav>
-            <a href="/pending" class="btn btn-ghost">Pending users</a>
-            <a href="/export-users" class="btn btn-ghost">Export CSV</a>
-            <a href="/logout" class="btn btn-ghost">Log out</a>
+            <a href="/pending" class="btn btn-ghost">📋 Pending</a>
+            <a href="/export-users" class="btn btn-ghost">📥 Export</a>
+            <a href="/logout" class="btn btn-ghost">🚪 Log out</a>
         </nav>
     </header>
     <main class="container">
         <div class="stats">
             <div class="stat-card">
-                <h3>Total users</h3>
-                <div class="number"><%= stats.totalUsers %></div>
+                <h3>Total Users</h3>
+                <div class="number">
+                    <%= stats.totalUsers %>
+                </div>
             </div>
             <div class="stat-card">
                 <h3>Admins</h3>
-                <div class="number"><%= stats.admins %></div>
+                <div class="number">
+                    <%= stats.admins %>
+                </div>
             </div>
             <div class="stat-card">
-                <h3>Users</h3>
-                <div class="number"><%= stats.subUsers %></div>
+                <h3>Sub Users</h3>
+                <div class="number">
+                    <%= stats.subUsers %>
+                </div>
             </div>
             <div class="stat-card">
-                <h3>Expiring soon</h3>
-                <div class="number"><%= stats.expiringSoon %></div>
+                <h3>Expiring Soon</h3>
+                <div class="number">
+                    <%= stats.expiringSoon %>
+                </div>
             </div>
             <div class="stat-card">
-                <h3>Total downloads</h3>
-                <div class="number"><%= stats.totalDownloads %></div>
+                <h3>Total Downloads</h3>
+                <div class="number">
+                    <%= stats.totalDownloads %>
+                </div>
             </div>
         </div>
         <div class="card">
-            <h2>Add admin</h2>
+            <h2>➕ Add Admin</h2>
             <form method="POST" action="/add-buyer" class="form-inline">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <div>
                     <label>Telegram ID</label>
-                    <input type="text" name="telegramId" placeholder="5434080792" required>
+                    <input type="text" name="telegramId" placeholder="5434080792" required autocomplete="off">
                 </div>
                 <div>
                     <label>Expiry (days)</label>
                     <input type="number" name="expiryDays" value="30" min="1">
                 </div>
-                <button type="submit" class="btn btn-primary">Add admin</button>
-                <% if (typeof error !== 'undefined' && error) { %>
-                    <p class="msg err"><%= error === 'user_must_start' ? 'User must send /start first' : error === 'invalid_id' ? 'Invalid Telegram ID' : error === 'already_added' ? 'Already an admin' : error %></p>
-                <% } %>
+                <button type="submit" class="btn btn-primary">Add Admin</button>
+                <% if (typeof error !=='undefined' && error) { %>
+                    <p class="msg err">
+                        <%= error==='user_must_start' ? 'User must send /start first' : error==='invalid_id'
+                            ? 'Invalid Telegram ID' : error==='already_added' ? 'Already an admin' : error %>
+                    </p>
+                    <% } %>
             </form>
         </div>
         <div class="card">
             <div class="toolbar">
-                <h2>Admins</h2>
-                <a href="/export-users" class="btn btn-ghost">Export CSV</a>
+                <h2>👑 Admins</h2>
             </div>
             <table>
                 <thead>
@@ -106,29 +456,45 @@
                         <th>Total</th>
                         <th>Users</th>
                         <th>Expiry</th>
-                        <th>Last active</th>
+                        <th>Last Active</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
-                    <% admins.forEach(b => { %>
+                    <% admins.forEach(b=> { %>
                         <tr>
-                            <td><code><%= b.telegramId %></code></td>
-                            <td><%= b.firstName || '—' %> <%= b.lastName || '' %></td>
-                            <td><%= b.downloadCount || 0 %></td>
-                            <td><%= b.subDownloads %></td>
-                            <td><%= b.totalDownloads %></td>
-                            <td><%= b.subUsers ? b.subUsers.length : 0 %>/9</td>
-                            <td class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
+                            <td data-label="ID"><code><%= b.telegramId %></code></td>
+                            <td data-label="Name">
+                                <%= b.firstName || '—' %>
+                                    <%= b.lastName || '' %>
+                            </td>
+                            <td data-label="Own PDFs">
+                                <%= b.downloadCount || 0 %>
+                            </td>
+                            <td data-label="Users' PDFs">
+                                <%= b.subDownloads %>
+                            </td>
+                            <td data-label="Total">
+                                <%= b.totalDownloads %>
+                            </td>
+                            <td data-label="Users">
+                                <%= b.subUsers ? b.subUsers.length : 0 %>/9
+                            </td>
+                            <td data-label="Expiry"
+                                class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
                                 <%= b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : '—' %>
                             </td>
-                            <td><%= b.lastActive ? new Date(b.lastActive).toLocaleDateString() : 'Never' %></td>
-                            <td><a href="/buyer/<%= b.telegramId %>" class="btn btn-primary">Manage</a></td>
+                            <td data-label="Last Active">
+                                <%= b.lastActive ? new Date(b.lastActive).toLocaleDateString() : 'Never' %>
+                            </td>
+                            <td><a href="/buyer/<%= b.telegramId %>" class="btn btn-primary">⚙️ Manage</a></td>
                         </tr>
-                    <% }) %>
+                        <% }) %>
                 </tbody>
             </table>
         </div>
     </main>
+    <footer class="footer">Fayda Bot Admin Dashboard</footer>
 </body>
+
 </html>

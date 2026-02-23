@@ -1,53 +1,212 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pending Users — Fayda Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        :root { --bg: #0f0f12; --surface: #18181c; --text: #e4e4e7; --muted: #a1a1aa; --accent: #6366f1; }
-        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5; }
-        .header { background: var(--surface); border-bottom: 1px solid rgba(255,255,255,0.06); padding: 1rem 1.5rem; }
-        .container { max-width: 720px; margin: 0 auto; padding: 1.5rem; }
-        .btn { display: inline-flex; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; text-decoration: none; background: rgba(255,255,255,0.06); color: var(--text); margin-bottom: 1rem; }
-        .btn:hover { background: rgba(255,255,255,0.1); }
-        .card { background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 1.5rem; }
-        .card h2 { font-size: 1rem; margin-bottom: 1rem; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-        th { text-align: left; padding: 0.75rem; color: var(--muted); font-weight: 500; border-bottom: 1px solid rgba(255,255,255,0.06); }
-        td { padding: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
-        code { font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.2rem 0.4rem; border-radius: 4px; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0f0f12;
+            --surface: #18181c;
+            --surface2: #1f1f24;
+            --text: #e4e4e7;
+            --muted: #a1a1aa;
+            --accent: #6366f1;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 0.75rem 1.5rem;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .back {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-decoration: none;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text);
+            transition: background 0.15s;
+        }
+
+        .back:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .hint {
+            color: var(--muted);
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 0.75rem;
+            color: var(--muted);
+            font-weight: 500;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        td {
+            padding: 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        code {
+            font-size: 0.85em;
+            background: rgba(255, 255, 255, 0.06);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            table,
+            thead,
+            tbody,
+            th,
+            td,
+            tr {
+                display: block;
+            }
+
+            thead {
+                display: none;
+            }
+
+            tbody tr {
+                background: var(--surface2);
+                border-radius: 10px;
+                padding: 1rem;
+                margin-bottom: 0.75rem;
+                border: 1px solid rgba(255, 255, 255, 0.04);
+            }
+
+            tbody tr:hover td {
+                background: transparent;
+            }
+
+            td {
+                padding: 0.25rem 0;
+                border: none;
+                font-size: 0.85rem;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            td::before {
+                content: attr(data-label);
+                font-weight: 500;
+                color: var(--muted);
+                font-size: 0.7rem;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                flex-shrink: 0;
+                margin-right: 0.75rem;
+            }
+        }
     </style>
 </head>
+
 <body>
     <header class="header">
-        <a href="/dashboard" class="btn">← Dashboard</a>
+        <a href="/dashboard" class="back">← Dashboard</a>
     </header>
     <main class="container">
         <div class="card">
-            <h2>Pending users (<%= pending.length %>)</h2>
-            <p style="color: var(--muted); font-size: 0.875rem; margin-bottom: 1rem;">Users who sent /start but are not added yet. Add them as Admin from the dashboard.</p>
-            <% if (pending.length === 0) { %>
+            <h2>📋 Pending Users (<%= pending.length %>)</h2>
+            <p class="hint">Users who sent /start but are not added yet. Add them as admin from the dashboard.</p>
+            <% if (pending.length===0) { %>
                 <p>No pending users.</p>
-            <% } else { %>
-                <table>
-                    <thead>
-                        <tr><th>Name</th><th>Username</th><th>Telegram ID</th><th>Last active</th></tr>
-                    </thead>
-                    <tbody>
-                        <% pending.forEach(u => { %>
+                <% } else { %>
+                    <table>
+                        <thead>
                             <tr>
-                                <td><%= u.firstName || '—' %> <%= u.lastName || '' %></td>
-                                <td>@<%= u.telegramUsername || '—' %></td>
-                                <td><code><%= u.telegramId %></code></td>
-                                <td><%= u.lastActive ? new Date(u.lastActive).toLocaleDateString() : '—' %></td>
+                                <th>Name</th>
+                                <th>Username</th>
+                                <th>Telegram ID</th>
+                                <th>Last Active</th>
                             </tr>
-                        <% }) %>
-                    </tbody>
-                </table>
-            <% } %>
+                        </thead>
+                        <tbody>
+                            <% pending.forEach(u=> { %>
+                                <tr>
+                                    <td data-label="Name">
+                                        <%= u.firstName || '—' %>
+                                            <%= u.lastName || '' %>
+                                    </td>
+                                    <td data-label="Username">@<%= u.telegramUsername || '—' %>
+                                    </td>
+                                    <td data-label="ID"><code><%= u.telegramId %></code></td>
+                                    <td data-label="Last Active">
+                                        <%= u.lastActive ? new Date(u.lastActive).toLocaleDateString() : '—' %>
+                                    </td>
+                                </tr>
+                                <% }) %>
+                        </tbody>
+                    </table>
+                    <% } %>
         </div>
     </main>
 </body>
+
 </html>
