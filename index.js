@@ -445,14 +445,11 @@ bot.command('cancel', async (ctx) => {
 async function handleDownload(ctx, isInline) {
   ctx.session = ctx.session || {};
   ctx.session.step = 'ID';
-  const cancelBtn = Markup.inlineKeyboard([
-    [Markup.button.callback('🔙 Cancel', 'main_menu')]
-  ]);
-  const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):\n\n_Tap Cancel to go back._";
+  const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):";
   if (isInline) {
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...cancelBtn });
+    await ctx.editMessageText(text, { parse_mode: 'Markdown' });
   } else {
-    await ctx.reply(text, { parse_mode: 'Markdown', ...cancelBtn });
+    await ctx.reply(text, { parse_mode: 'Markdown' });
   }
 }
 
