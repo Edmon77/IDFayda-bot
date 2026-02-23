@@ -407,7 +407,9 @@ async function sendMenu(ctx, text, options) {
 // ---------- Start Command – Show Main Menu ----------
 bot.start(async (ctx) => {
   try {
+    const prevId = ctx.session?.lastMenuMsgId;
     ctx.session = { lastMenuMsgId: null };
+    if (prevId) ctx.deleteMessage(prevId).catch(() => { });
     const user = ctx.state.user;
     const title = getPanelTitle(user.role);
     await sendMenu(ctx, title, {
