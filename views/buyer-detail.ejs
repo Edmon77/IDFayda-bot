@@ -263,9 +263,21 @@
                 <p><strong>Users' PDFs:</strong>
                     <%= subUsersTotal %>
                 </p>
+                <% if (archived > 0) { %>
+                <p><strong>Removed Users' PDFs:</strong>
+                    <%= archived %>
+                </p>
+                <% } %>
                 <p><strong>Total:</strong>
                     <%= totalDownloads %>
                 </p>
+            </div>
+            <div style="margin-top: 1rem;">
+                <form method="POST" action="/buyer/<%= buyer.telegramId %>/clear-downloads" style="display: inline;"
+                    onsubmit="return confirm('Clear ALL download counts for this admin and their users? This cannot be undone.');">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn btn-danger">🗑 Clear Downloads</button>
+                </form>
             </div>
         </div>
         <div class="card">

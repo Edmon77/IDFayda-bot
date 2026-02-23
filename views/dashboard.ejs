@@ -384,6 +384,7 @@
         <h1>Fayda Bot <span class="badge">Super Admin</span></h1>
         <nav>
             <a href="/pending" class="btn btn-ghost">📋 Pending</a>
+            <a href="/revoked" class="btn btn-ghost">⛔ Revoked<% if (stats.revokedCount) { %> (<%= stats.revokedCount %>)<% } %></a>
             <a href="/export-users" class="btn btn-ghost">📥 Export</a>
             <a href="/logout" class="btn btn-ghost">🚪 Log out</a>
         </nav>
@@ -418,6 +419,12 @@
                 <h3>Total Downloads</h3>
                 <div class="number">
                     <%= stats.totalDownloads %>
+                </div>
+            </div>
+            <div class="stat-card">
+                <h3>Revoked</h3>
+                <div class="number" style="color: var(--danger)">
+                    <%= stats.revokedCount %>
                 </div>
             </div>
         </div>

@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema({
   lastActive: { type: Date, index: true },
   usageCount: { type: Number, default: 0 },
   downloadCount: { type: Number, default: 0 },
+  archivedSubDownloads: { type: Number, default: 0 },
   lastDownload: { type: Date }
 });
 

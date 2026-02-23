@@ -184,17 +184,20 @@ app.get('/dashboard', requireWebAuth, async (req, res) => {
   const allSubIds = admins.flatMap(b => b.subUsers || []);
   const subs = await User.find({ telegramId: { $in: allSubIds } }).select('telegramId downloadCount').lean();
   const subMap = new Map(subs.map(s => [s.telegramId, s.downloadCount || 0]));
+  const revokedCount = await User.countDocuments({ role: 'admin', expiryDate: { $lt: new Date() } });
   const stats = {
     totalUsers: await User.countDocuments(),
     admins: admins.length,
     subUsers: allSubIds.length,
     expiringSoon: await User.countDocuments({ expiryDate: { $lt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), $gt: new Date() }, role: { $in: ['admin', 'user'] } }),
-    totalDownloads: admins.reduce((s, b) => s + (b.downloadCount || 0), 0) + subs.reduce((s, u) => s + (u.downloadCount || 0), 0)
+    totalDownloads: admins.reduce((s, b) => s + (b.downloadCount || 0) + (b.archivedSubDownloads || 0), 0) + subs.reduce((s, u) => s + (u.downloadCount || 0), 0),
+    revokedCount
   };
   const enriched = admins.map(b => {
     const subIds = b.subUsers || [];
     const subDownloads = subIds.reduce((sum, id) => sum + (subMap.get(id) || 0), 0);
-    return { ...b, subDownloads, totalDownloads: (b.downloadCount || 0) + subDownloads };
+    const archived = b.archivedSubDownloads || 0;
+    return { ...b, subDownloads, archived, totalDownloads: (b.downloadCount || 0) + subDownloads + archived };
   });
   res.render('dashboard', { stats, admins: enriched, error: req.query.error });
 });
@@ -234,8 +237,9 @@ app.get('/buyer/:id', requireWebAuth, async (req, res) => {
   if (!buyer) return res.status(404).send('Not found');
   const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } }).lean();
   const subUsersTotal = subs.reduce((s, u) => s + (u.downloadCount || 0), 0);
-  const totalDownloads = (buyer.downloadCount || 0) + subUsersTotal;
-  res.render('buyer-detail', { buyer, subs, buyerOwn: buyer.downloadCount || 0, subUsersTotal, totalDownloads, error: req.query.error });
+  const archived = buyer.archivedSubDownloads || 0;
+  const totalDownloads = (buyer.downloadCount || 0) + subUsersTotal + archived;
+  res.render('buyer-detail', { buyer, subs, buyerOwn: buyer.downloadCount || 0, subUsersTotal, archived, totalDownloads, error: req.query.error });
 });
 app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   const { identifier, expiryDays } = req.body;
@@ -266,7 +270,13 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   res.redirect(`/buyer/${req.params.id}`);
 });
 app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, async (req, res) => {
-  await User.updateOne({ telegramId: req.params.buyerId }, { $pull: { subUsers: req.params.subId } });
+  // Archive sub-user downloads before deletion so billing total is preserved
+  const sub = await User.findOne({ telegramId: req.params.subId }).select('downloadCount').lean();
+  const dlCount = sub?.downloadCount || 0;
+  await User.updateOne({ telegramId: req.params.buyerId }, {
+    $pull: { subUsers: req.params.subId },
+    $inc: { archivedSubDownloads: dlCount }
+  });
   await User.deleteOne({ telegramId: req.params.subId });
   res.redirect(`/buyer/${req.params.buyerId}`);
 });
@@ -280,6 +290,77 @@ app.post('/buyer/:id/remove', requireWebAuth, async (req, res) => {
   await buyer.save();
   await User.updateMany({ addedBy: req.params.id }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
   res.redirect('/dashboard');
+});
+
+// ---------- Clear Download Summary ----------
+app.post('/buyer/:id/clear-downloads', requireWebAuth, async (req, res) => {
+  const buyer = await User.findOne({ telegramId: req.params.id });
+  if (!buyer) return res.redirect('/dashboard');
+  // Reset admin's own + archived counts
+  buyer.downloadCount = 0;
+  buyer.archivedSubDownloads = 0;
+  await buyer.save();
+  // Reset all current sub-users' counts
+  if (buyer.subUsers && buyer.subUsers.length > 0) {
+    await User.updateMany(
+      { telegramId: { $in: buyer.subUsers } },
+      { $set: { downloadCount: 0 } }
+    );
+  }
+  res.redirect(`/buyer/${req.params.id}`);
+});
+
+// ---------- Revoked Admins Page ----------
+app.get('/revoked', requireWebAuth, async (req, res) => {
+  const revoked = await User.find({
+    role: 'admin',
+    expiryDate: { $lt: new Date() }
+  }).sort({ expiryDate: -1 }).lean();
+  // Enrich with sub-user info and download totals
+  const allSubIds = revoked.flatMap(b => b.subUsers || []);
+  const subs = await User.find({ telegramId: { $in: allSubIds } }).select('telegramId downloadCount').lean();
+  const subMap = new Map(subs.map(s => [s.telegramId, s.downloadCount || 0]));
+  const enriched = revoked.map(b => {
+    const subDownloads = (b.subUsers || []).reduce((sum, id) => sum + (subMap.get(id) || 0), 0);
+    const archived = b.archivedSubDownloads || 0;
+    return { ...b, subDownloads, archived, totalDownloads: (b.downloadCount || 0) + subDownloads + archived };
+  });
+  res.render('revoked', { revoked: enriched });
+});
+
+// ---------- Restore Revoked Admin ----------
+app.post('/buyer/:id/restore', requireWebAuth, async (req, res) => {
+  const { expiryDays = 30 } = req.body;
+  const buyer = await User.findOne({ telegramId: req.params.id });
+  if (!buyer) return res.redirect('/revoked');
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + (parseInt(expiryDays) || 30));
+  buyer.expiryDate = expiry;
+  await buyer.save();
+  // Also update sub-users' expiry to match
+  if (buyer.subUsers && buyer.subUsers.length > 0) {
+    await User.updateMany(
+      { telegramId: { $in: buyer.subUsers } },
+      { $set: { expiryDate: expiry } }
+    );
+  }
+  // Notify admin via Telegram
+  try {
+    await bot.telegram.sendMessage(buyer.telegramId, '✅ Your access has been restored!', { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(buyer.telegramId, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getReplyKeyboard('admin') });
+  } catch (e) {
+    logger.warn('Could not notify restored admin:', e.message);
+  }
+  // Notify sub-users via Telegram
+  for (const subId of (buyer.subUsers || [])) {
+    try {
+      await bot.telegram.sendMessage(subId, '✅ Your access has been restored!', { parse_mode: 'Markdown' });
+      await bot.telegram.sendMessage(subId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
+    } catch (e) {
+      logger.warn(`Could not notify restored sub-user ${subId}:`, e.message);
+    }
+  }
+  res.redirect('/revoked');
 });
 app.get('/export-users', requireWebAuth, async (req, res) => {
   const users = await User.find({}).lean();
@@ -385,7 +466,22 @@ bot.use(async (ctx, next) => {
     }
 
     if (user.expiryDate && new Date(user.expiryDate) < new Date()) {
-      return ctx.reply('❌ Your subscription has expired. Please renew.');
+      if (user.role === 'admin') {
+        return ctx.reply('❌ Access Revoked, Pay Your Credits !!', Markup.removeKeyboard());
+      }
+      return ctx.reply('❌ Access Revoked, Contact Admin!!', Markup.removeKeyboard());
+    }
+
+    // If sub-user, also check if parent admin is expired/revoked
+    if (user.role === 'user' && user.parentAdmin) {
+      const parentAdmin = await User.findOne(
+        { telegramId: user.parentAdmin },
+        { expiryDate: 1, role: 1 }
+      ).lean();
+      if (!parentAdmin || parentAdmin.role === 'unauthorized' ||
+        (parentAdmin.expiryDate && new Date(parentAdmin.expiryDate) < new Date())) {
+        return ctx.reply('❌ Access Revoked, Contact Admin!!', Markup.removeKeyboard());
+      }
     }
 
     ctx.state.user = user;
@@ -1065,7 +1161,10 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
       ]));
     }
 
+    // Archive sub-user downloads before deletion
+    const sub = await User.findOne({ telegramId: subId }).select('downloadCount').lean();
     admin.subUsers = (admin.subUsers || []).filter(id => id !== subId);
+    admin.archivedSubDownloads = (admin.archivedSubDownloads || 0) + (sub?.downloadCount || 0);
     await admin.save();
     await User.deleteOne({ telegramId: subId });
 
@@ -1186,7 +1285,10 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     const subId = ctx.match[1];
     const buyer = ctx.state.user;
 
+    // Archive sub-user downloads before deletion
+    const sub = await User.findOne({ telegramId: subId }).select('downloadCount').lean();
     buyer.subUsers = (buyer.subUsers || []).filter(id => id !== subId);
+    buyer.archivedSubDownloads = (buyer.archivedSubDownloads || 0) + (sub?.downloadCount || 0);
     await buyer.save();
     await User.deleteOne({ telegramId: subId });
 

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Revoked Admins — Fayda Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0f0f12;
+            --surface: #18181c;
+            --surface2: #1f1f24;
+            --text: #e4e4e7;
+            --muted: #a1a1aa;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header nav {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 0.65rem;
+            background: var(--danger);
+            color: white;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-weight: 500;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            opacity: 0.9;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--muted);
+        }
+
+        .btn-ghost:hover {
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .revoked-item {
+            background: var(--surface2);
+            border-radius: 10px;
+            padding: 1.25rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid rgba(239, 68, 68, 0.15);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .revoked-info {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .revoked-info h3 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .revoked-meta {
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        .revoked-meta span {
+            display: inline-block;
+            margin-right: 1rem;
+        }
+
+        .revoked-stats {
+            color: var(--muted);
+            font-size: 0.8rem;
+            text-align: right;
+            min-width: 120px;
+        }
+
+        .revoked-stats .total {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .restore-form {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .restore-form input[type="number"] {
+            width: 70px;
+            padding: 0.4rem 0.5rem;
+            background: var(--bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+        }
+
+        .restore-form input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .restore-form label {
+            font-size: 0.7rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .expired-badge {
+            font-size: 0.7rem;
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--muted);
+        }
+
+        .empty h3 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem 1rem 1rem;
+            color: var(--muted);
+            font-size: 0.7rem;
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 0.75rem 1rem;
+            }
+
+            .container {
+                padding: 1rem;
+            }
+
+            .revoked-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .revoked-stats {
+                text-align: left;
+            }
+
+            .restore-form {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header class="header">
+        <h1>⛔ Revoked Admins <span class="badge">
+                <%= revoked.length %>
+            </span></h1>
+        <nav>
+            <a href="/dashboard" class="btn btn-ghost">← Dashboard</a>
+            <a href="/logout" class="btn btn-ghost">🚪 Log out</a>
+        </nav>
+    </header>
+    <main class="container">
+        <% if (revoked.length===0) { %>
+            <div class="card empty">
+                <h3>✅ No revoked admins</h3>
+                <p>All admins have active subscriptions.</p>
+            </div>
+            <% } else { %>
+                <div class="card">
+                    <h2>Expired admins — restore to reactivate access</h2>
+                    <% revoked.forEach(b=> { %>
+                        <div class="revoked-item">
+                            <div class="revoked-info">
+                                <h3>
+                                    <%= b.firstName || '—' %>
+                                        <%= b.lastName || '' %>
+                                            <span class="expired-badge">Expired</span>
+                                </h3>
+                                <div class="revoked-meta">
+                                    <span>ID: <code><%= b.telegramId %></code></span>
+                                    <span>@<%= b.telegramUsername || '—' %></span>
+                                    <span>Users: <%= b.subUsers ? b.subUsers.length : 0 %></span>
+                                </div>
+                                <div class="revoked-meta" style="margin-top: 0.25rem;">
+                                    <span>Expired: <%= b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : '—'
+                                            %></span>
+                                </div>
+                            </div>
+                            <div class="revoked-stats">
+                                <div>Total PDFs</div>
+                                <div class="total">
+                                    <%= b.totalDownloads %>
+                                </div>
+                                <div style="font-size: 0.7rem">Own: <%= b.downloadCount || 0 %> · Users: <%=
+                                            b.subDownloads %>
+                                            <% if (b.archived> 0) { %> · Archived: <%= b.archived %>
+                                                    <% } %>
+                                </div>
+                            </div>
+                            <form method="POST" action="/buyer/<%= b.telegramId %>/restore" class="restore-form">
+                                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                                <div>
+                                    <label>Days</label>
+                                    <input type="number" name="expiryDays" value="30" min="1">
+                                </div>
+                                <button type="submit" class="btn btn-success">✅ Restore</button>
+                            </form>
+                        </div>
+                        <% }) %>
+                </div>
+                <% } %>
+    </main>
+    <footer class="footer">Fayda Bot Admin Dashboard</footer>
+</body>
+
+</html>
