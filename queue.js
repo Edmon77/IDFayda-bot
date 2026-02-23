@@ -7,10 +7,10 @@ const { sanitizeFilename } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
 const { getMainMenu } = require('./utils/menu');
 const fayda = require('./utils/faydaClient');
+const { DownloadTimer } = require('./utils/timer');
 const PDF_FETCH_ATTEMPTS = 3;
 const PDF_FETCH_RETRY_DELAY_MS = 2000;
 const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_CONCURRENCY, 10) || 10, 1), 50);
-
 
 
 // Bull queue configuration - use Redis URL directly
@@ -64,12 +64,16 @@ logger.info(`PDF queue worker started with concurrency ${PDF_QUEUE_CONCURRENCY}`
 
 // Worker: processes jobs concurrently (configurable for 100–300 users; default 10)
 pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
-  const { chatId, userId, userRole, authHeader, pdfPayload, fullName } = job.data;
+  const { chatId, userId, userRole, authHeader, pdfPayload, fullName, _timer } = job.data;
+
+  // Restore or create timer (preserves requestId from sync flow if available)
+  const timer = DownloadTimer.fromSession(_timer, userId);
 
   try {
     // 1. Fetch PDF from Fayda with retries for transient failures
     let pdfResponse;
     let lastError;
+    timer.startStep('pdfFetch');
     for (let attempt = 1; attempt <= PDF_FETCH_ATTEMPTS; attempt++) {
       try {
         pdfResponse = await fayda.api.post('/printableCredentialRoute', pdfPayload, {
@@ -90,17 +94,22 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
         }
       }
     }
+    timer.endStep('pdfFetch');
 
+    timer.startStep('pdfConversion');
     const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
+    timer.endStep('pdfConversion');
 
     // 2. Generate filename from fullName (sanitize)
     const filename = `${sanitizeFilename(fullName?.eng)}.pdf`;
 
     // 3. Send PDF via Telegram
+    timer.startStep('telegramUpload');
     await bot.telegram.sendDocument(chatId, {
       source: pdfBuffer,
       filename: filename
     }, { caption: "✨ Your Digital ID is ready!" });
+    timer.endStep('telegramUpload');
 
     // 4. Send main menu so user can continue
     const menu = getMainMenu(userRole || 'user');
@@ -116,14 +125,19 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
     );
 
     logger.info(`PDF sent successfully to user ${userId}`);
+    timer.report('success_queued');
     return { success: true };
   } catch (error) {
+    timer.endStep('pdfFetch');      // no-op if already ended
+    timer.endStep('pdfConversion'); // no-op if not started
+    timer.endStep('telegramUpload');
     logger.error(`Job failed for user ${userId}:`, {
       message: error.message,
       stack: error.stack,
       status: error.response?.status,
       response: safeResponseForLog(error.response?.data)
     });
+    timer.report('failed_queued');
     // Rethrow so Bull retries
     throw error;
   }

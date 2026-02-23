@@ -33,6 +33,7 @@ const { BTN, getReplyKeyboard, getPanelTitle, paginate } = require('./utils/menu
 const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
+const { DownloadTimer } = require('./utils/timer');
 
 const PDF_SYNC_ATTEMPTS = 2;
 const PDF_SYNC_RETRY_DELAY_MS = 1500;
@@ -1453,26 +1454,39 @@ bot.on('text', async (ctx) => {
         return ctx.reply(`❌ ${validation.error}`, { parse_mode: 'Markdown' });
       }
 
+      const timer = new DownloadTimer(ctx.from.id.toString());
       const status = await ctx.reply("⏳ Loading...");
 
       let verified = false;
       let lastErr;
       for (let attempt = 1; attempt <= CAPTCHA_VERIFY_ATTEMPTS && !verified; attempt++) {
         try {
+          timer.startStep('captchaSolve');
           const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
+          timer.endStep('captchaSolve');
+
+          timer.startStep('idVerification');
           const res = await fayda.api.post('/verify', {
             idNumber: validation.value,
             verificationMethod: validation.type || 'FCN',
             captchaValue: result.data
           }, { timeout: 35000 });
+          timer.endStep('idVerification');
 
           ctx.session.tempJwt = res.data.token;
           ctx.session.id = validation.value;
           ctx.session.verificationMethod = validation.type || 'FCN';
           ctx.session.step = 'OTP';
           verified = true;
+
+          // Record ID phase duration and persist timer for OTP step
+          timer.setPhase('idPhaseMs', Date.now() - timer.flowStart);
+          ctx.session._timer = timer.toSession();
+
           await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "Enter the OTP sent to your phone:\n_Send /cancel to return to menu._", { parse_mode: 'Markdown' });
         } catch (e) {
+          timer.endStep('captchaSolve');   // no-op if already ended
+          timer.endStep('idVerification'); // no-op if not started
           lastErr = e;
           const errMsg = e.response?.data?.message || e.message || 'Verification failed';
           logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed:`, errMsg);
@@ -1486,6 +1500,7 @@ bot.on('text', async (ctx) => {
         const rawMsg = lastErr?.response?.data?.message || lastErr?.message || '';
         const userMsg = /invalid|limit/i.test(rawMsg) ? 'Invalid ID' : (rawMsg || 'Verification failed');
         logger.error("ID verification error after retries:", { error: rawMsg, stack: lastErr?.stack });
+        timer.report('id_verification_failed');
         ctx.reply(`❌ Error: ${userMsg}\nTry /start again.`);
         ctx.session = ctx.session || {}; ctx.session.step = null;
       }
@@ -1506,11 +1521,21 @@ bot.on('text', async (ctx) => {
         return ctx.reply(`❌ ${validation.error}. Please enter a valid OTP.`);
       }
 
+      // Restore timer from ID phase (single requestId across entire flow)
+      const timer = DownloadTimer.fromSession(state._timer, ctx.from.id.toString());
+      const otpPhaseStart = Date.now();
+      // User wait = time between ID phase end and OTP submission
+      if (state._timer?.flowStart) {
+        const idPhaseEnd = (state._timer.flowStart || 0) + (state._timer.phaseTimings?.idPhaseMs || 0);
+        timer.setPhase('userWaitMs', otpPhaseStart - idPhaseEnd);
+      }
+
       const status = await ctx.reply("⏳ Verifying OTP and generating document...");
       const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
       let otpResponse;
       let otpAttempts = 2;
+      timer.startStep('otpValidation');
       for (let attempt = 1; attempt <= otpAttempts; attempt++) {
         try {
           otpResponse = await fayda.api.post('/validateOtp', {
@@ -1529,6 +1554,7 @@ bot.on('text', async (ctx) => {
           await new Promise(r => setTimeout(r, 2000));
         }
       }
+      timer.endStep('otpValidation');
 
       try {
         const { signature, uin, fullName } = otpResponse.data;
@@ -1544,19 +1570,27 @@ bot.on('text', async (ctx) => {
         if (!PREFER_QUEUE_PDF) {
           for (let attempt = 1; attempt <= PDF_SYNC_ATTEMPTS && !pdfSent; attempt++) {
             try {
+              timer.startStep('pdfFetch');
               const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
                 headers: authHeader,
                 responseType: 'text',
                 timeout: 25000
               });
+              timer.endStep('pdfFetch');
+
+              timer.startStep('pdfConversion');
               const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
+              timer.endStep('pdfConversion');
+
               const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
               const filename = `${safeName}.pdf`;
 
+              timer.startStep('telegramUpload');
               await ctx.replyWithDocument({
                 source: pdfBuffer,
                 filename: filename
               }, { caption: "✨ Your Digital ID is ready!" });
+              timer.endStep('telegramUpload');
 
               await User.updateOne(
                 { telegramId: ctx.from.id.toString() },
@@ -1565,6 +1599,9 @@ bot.on('text', async (ctx) => {
               ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
             } catch (syncErr) {
+              timer.endStep('pdfFetch');      // no-op if already ended
+              timer.endStep('pdfConversion'); // no-op if not started
+              timer.endStep('telegramUpload');
               lastSyncError = syncErr;
               if (attempt < PDF_SYNC_ATTEMPTS) {
                 logger.warn(`Sync PDF attempt ${attempt} failed, retrying:`, syncErr.message);
@@ -1576,7 +1613,8 @@ bot.on('text', async (ctx) => {
         }
 
         if (pdfSent) {
-          // Done
+          timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
+          timer.report('success');
         } else {
           // Sync failed (or PREFER_QUEUE_PDF) — enqueue for background retries
           try {
@@ -1586,7 +1624,8 @@ bot.on('text', async (ctx) => {
               userRole: ctx.state.user?.role || 'user',
               authHeader,
               pdfPayload: { uin, signature },
-              fullName
+              fullName,
+              _timer: timer.toSession()
             }, {
               priority: 1,
               timeout: 60000
@@ -1596,28 +1635,45 @@ bot.on('text', async (ctx) => {
             logger.error('Queue add failed, trying sync once more:', queueError);
             await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Processing PDF directly...");
             try {
+              timer.startStep('pdfFetch');
               const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
                 headers: authHeader,
                 responseType: 'text',
                 timeout: 25000
               });
+              timer.endStep('pdfFetch');
+
+              timer.startStep('pdfConversion');
               const { buffer: pdfBuffer } = parsePdfResponse(pdfResponse.data);
+              timer.endStep('pdfConversion');
+
               const safeName = (fullName?.eng || 'Fayda_Card').replace(/[^a-zA-Z0-9]/g, '_');
+
+              timer.startStep('telegramUpload');
               await ctx.replyWithDocument({
                 source: pdfBuffer,
                 filename: `${safeName}.pdf`
               }, { caption: "✨ Your Digital ID is ready!" });
+              timer.endStep('telegramUpload');
+
               await User.updateOne(
                 { telegramId: ctx.from.id.toString() },
                 { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
               );
               ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
+              timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
+              timer.report('success_after_queue_fallback');
             } catch (syncError2) {
+              timer.endStep('pdfFetch');
+              timer.endStep('pdfConversion');
+              timer.endStep('telegramUpload');
               logger.error('Synchronous PDF processing failed:', {
                 error: syncError2.message,
                 response: safeResponseForLog(syncError2.response?.data)
               });
+              timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
+              timer.report('failed');
               await ctx.reply(`❌ Could not generate PDF: ${syncError2.response?.data?.message || syncError2.message}. Please try /start again.`);
               ctx.session = ctx.session || {}; ctx.session.step = null;
             }
@@ -1625,16 +1681,21 @@ bot.on('text', async (ctx) => {
 
           // Only show "queued" message if we didn't send PDF (queue was used)
           if (!pdfSent) {
+            timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
+            timer.report('queued');
             ctx.session = ctx.session || {}; ctx.session.step = null;
             await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.');
           }
         }
       } catch (e) {
+        timer.endStep('otpValidation'); // end if still open
         logger.error("OTP/PDF Error:", {
           error: e.message,
           stack: e.stack,
           response: safeResponseForLog(e.response?.data)
         });
+        timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
+        timer.report('failed');
         try {
           await ctx.reply(`❌ Failed: ${e.response?.data?.message || e.message || 'Unknown error. Please try again.'}`);
         } catch (replyError) {
