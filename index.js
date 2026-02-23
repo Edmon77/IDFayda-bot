@@ -223,7 +223,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   await user.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-    await bot.telegram.sendMessage(tid, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getMainMenu('admin') });
+    await bot.telegram.sendMessage(tid, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getReplyKeyboard('admin') });
   } catch (e) { }
   res.redirect('/dashboard');
 });
@@ -256,7 +256,7 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   await subUser.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-    await bot.telegram.sendMessage(tid, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
+    await bot.telegram.sendMessage(tid, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
   } catch (e) { }
   res.redirect(`/buyer/${req.params.id}`);
 });
@@ -330,7 +330,7 @@ bot.catch((err, ctx) => {
   // Try to send error message only if we have a valid context and chat
   if (ctx && ctx.chat && ctx.from) {
     try {
-      ctx.reply('❌ An error occurred. Please try again later or contact support.', { ...getMainMenu(ctx.state?.user?.role || 'user') }).catch(() => {
+      ctx.reply('❌ An error occurred. Please try again later or contact support.').catch(() => {
         // Silently ignore if we can't send (user blocked, etc.)
       });
     } catch (e) {
@@ -383,7 +383,7 @@ bot.use(async (ctx, next) => {
     return next();
   } catch (error) {
     logger.error('Authorization middleware error:', error);
-    return ctx.reply('❌ An error occurred. Please try again.', { ...getMainMenu(ctx.state?.user?.role || 'user') });
+    return ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -480,16 +480,10 @@ bot.action('main_menu', async (ctx) => {
     ctx.session.step = null;
     const user = ctx.state.user;
     const title = getPanelTitle(user.role);
-    await ctx.editMessageText(title, {
-      parse_mode: 'Markdown',
-      ...getMainMenu(user.role)
-    });
+    // Remove inline buttons from the old message — reply keyboard is persistent
+    await ctx.editMessageText(title, { parse_mode: 'Markdown' });
   } catch (error) {
     logger.error('Main menu action error:', error);
-    try {
-      const title = getPanelTitle(ctx.state.user?.role);
-      ctx.reply(title, { parse_mode: 'Markdown', ...getReplyKeyboard(ctx.state.user?.role) });
-    } catch (_) { }
   }
 });
 
@@ -520,7 +514,7 @@ bot.action(/view_admins_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('View admins error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -549,7 +543,7 @@ bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('View my users error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -580,7 +574,7 @@ bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove admin list error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -612,7 +606,7 @@ bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove my user list error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -628,7 +622,7 @@ bot.action('add_user_under_admin', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add user under admin error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -653,7 +647,7 @@ bot.action('remove_user_under_admin', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove user under admin error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -688,7 +682,7 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove under admin error:', error);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
@@ -744,53 +738,62 @@ bot.action(/subusers_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
   } catch (error) {
     logger.error('Sub users view error:', error);
-    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed. Please try again.');
   }
 });
 
-// ---------- Buyer Dashboard (Optimized) ----------
+// ---------- Dashboard Handler (shared by inline button and reply keyboard) ----------
+async function handleDashboard(ctx, isInline) {
+  const buyer = ctx.state.user;
+  if (!buyer || buyer.role !== 'admin') return;
+
+  const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
+    .select('telegramId firstName telegramUsername downloadCount')
+    .lean()
+    .exec();
+
+  const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
+  const buyerOwn = buyer.downloadCount || 0;
+  const total = buyerOwn + subDownloads;
+  const { items: pageSubs, page: p, totalPages } = paginate(subs, 1);
+
+  let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
+  text += `Admin: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
+  text += `ID: \`${buyer.telegramId}\`\n\n`;
+  text += '**Work Summary:**\n';
+  text += `Your Own PDFs: ${buyerOwn}\n`;
+  text += `Your Users: ${subs.length}\n`;
+  text += `Users' PDFs: ${subDownloads}\n`;
+  text += `Total PDFs: ${total}\n\n`;
+  text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
+  pageSubs.forEach((sub, i) => {
+    text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
+    text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
+  });
+
+  const keyboard = [];
+  if (totalPages > 1) {
+    const row = [];
+    if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
+    if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
+    keyboard.push(row);
+  }
+  keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
+
+  if (isInline) {
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+  } else {
+    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+  }
+}
+
 bot.action('dashboard_buyer', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    const buyer = ctx.state.user;
-
-    // Optimized: fetch sub-users in one query
-    const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
-      .select('telegramId firstName telegramUsername downloadCount')
-      .lean()
-      .exec();
-
-    const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
-    const buyerOwn = buyer.downloadCount || 0;
-    const total = buyerOwn + subDownloads;
-    const { items: pageSubs, page: p, totalPages } = paginate(subs, 1);
-
-    let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
-    text += `Admin: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
-    text += `ID: \`${buyer.telegramId}\`\n\n`;
-    text += '**Work Summary:**\n';
-    text += `Your Own PDFs: ${buyerOwn}\n`;
-    text += `Your Users: ${subs.length}\n`;
-    text += `Users' PDFs: ${subDownloads}\n`;
-    text += `Total PDFs: ${total}\n\n`;
-    text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
-    pageSubs.forEach((sub, i) => {
-      text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
-      text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
-    });
-
-    const keyboard = [];
-    if (totalPages > 1) {
-      const row = [];
-      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
-      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
-      keyboard.push(row);
-    }
-    keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')], [Markup.button.callback('🔙 Main Menu', 'main_menu')]);
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+    await handleDashboard(ctx, true);
   } catch (error) {
     logger.error('Dashboard buyer error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to load dashboard. Please try again.');
   }
 });
 
@@ -828,7 +831,7 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
   } catch (e) {
     logger.error('Dashboard buyer page error:', e);
-    ctx.reply('❌ Failed.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed.');
   }
 });
 
@@ -891,7 +894,7 @@ bot.action('add_buyer', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add buyer error:', error);
-    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed. Please try again.');
   }
 });
 
@@ -925,7 +928,7 @@ bot.action('view_pending', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
   } catch (error) {
     logger.error('View pending error:', error);
-    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed. Please try again.');
   }
 });
 
@@ -970,7 +973,7 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Select admin error:', error);
-    ctx.reply('❌ Failed to load user details. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to load user details. Please try again.');
   }
 });
 
@@ -994,7 +997,7 @@ bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
     );
   } catch (error) {
     logger.error('Add sub admin error:', error);
-    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed. Please try again.');
   }
 });
 
@@ -1029,7 +1032,7 @@ bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Remove sub admin error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to load sub-users. Please try again.');
   }
 });
 
@@ -1055,7 +1058,7 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove buyer error:', error);
-    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed. Please try again.');
   }
 });
 
@@ -1084,7 +1087,7 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to remove sub-user. Please try again.');
   }
 });
 
@@ -1124,7 +1127,7 @@ bot.action('manage_subs', async (ctx) => {
     });
   } catch (error) {
     logger.error('Manage subs error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to load sub-users. Please try again.');
   }
 });
 
@@ -1142,7 +1145,7 @@ bot.action('add_sub_self', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add sub self error:', error);
-    ctx.reply('❌ Failed. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed. Please try again.');
   }
 });
 
@@ -1215,7 +1218,7 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove my sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+    ctx.reply('❌ Failed to remove sub-user. Please try again.');
   }
 });
 
@@ -1235,15 +1238,8 @@ bot.on('text', async (ctx) => {
         return handleManageUsers(ctx, false);
       case BTN.DASHBOARD:
         if (state?.step) return ctx.reply('⚠️ You have an active flow. Finish it or press ❌ Cancel.');
-        // Dashboard uses inline-only pagination, send a fresh dashboard view
         try {
-          const user = ctx.state.user;
-          if (user.role !== 'admin') return;
-          const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers downloadCount').lean();
-          let dashText = '📊 **YOUR DASHBOARD**\n\n';
-          dashText += `Total admins: ${admins.length}\n\n`;
-          const keyboard = [[Markup.button.callback('🔙 Main Menu', 'main_menu')]];
-          return ctx.reply(dashText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+          return await handleDashboard(ctx, false);
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
           return ctx.reply('❌ Failed to load dashboard.');
@@ -1261,7 +1257,7 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_BUYER_ID') {
       const telegramId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(telegramId)) {
-        return ctx.reply('❌ Please enter a numeric Telegram ID (e.g. 5434080792).', { ...getMainMenu(ctx.state.user?.role) });
+        return ctx.reply('❌ Please enter a numeric Telegram ID (e.g. 5434080792).');
       }
       const statusMsg = await ctx.reply('🔍 Looking up user...');
       try {
@@ -1298,7 +1294,7 @@ bot.on('text', async (ctx) => {
         );
         try {
           await bot.telegram.sendMessage(user.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-          await bot.telegram.sendMessage(user.telegramId, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getMainMenu('admin') });
+          await bot.telegram.sendMessage(user.telegramId, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getReplyKeyboard('admin') });
         } catch (e) {
           logger.warn('Could not send menu to new admin:', e.message);
         }
@@ -1309,7 +1305,7 @@ bot.on('text', async (ctx) => {
           '❌ Failed to add buyer. Please try again.',
           { ...getMainMenu(ctx.state.user?.role) }
         ).catch(() => {
-          ctx.reply('❌ Failed to add buyer. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+          ctx.reply('❌ Failed to add buyer. Please try again.');
         });
       }
       return;
@@ -1338,7 +1334,7 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_USER_ID_UNDER_ADMIN') {
       const userId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(userId)) {
-        return ctx.reply('❌ Please enter a numeric Telegram ID for the user.', { ...getMainMenu(ctx.state.user?.role) });
+        return ctx.reply('❌ Please enter a numeric Telegram ID for the user.');
       }
       const adminId = state.adminIdForUser;
       const statusMsg = await ctx.reply('🔍 Looking up user...');
@@ -1396,7 +1392,7 @@ bot.on('text', async (ctx) => {
         );
         try {
           await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-          await bot.telegram.sendMessage(userId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
+          await bot.telegram.sendMessage(userId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
         } catch (e) {
           logger.warn('Could not send activation to user:', e.message);
         }
@@ -1407,7 +1403,7 @@ bot.on('text', async (ctx) => {
           '❌ Failed to add user. Please try again.',
           { ...getMainMenu(ctx.state.user?.role) }
         ).catch(() => {
-          ctx.reply('❌ Failed to add user. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+          ctx.reply('❌ Failed to add user. Please try again.');
         });
       }
       return;
@@ -1420,7 +1416,7 @@ bot.on('text', async (ctx) => {
 
       if (!buyer) {
         ctx.session = ctx.session || {}; ctx.session.step = null;
-        return ctx.reply('❌ Buyer not found. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+        return ctx.reply('❌ Buyer not found. Please try again.');
       }
 
       const telegramId = text.trim().replace(/\s/g, '');
@@ -1474,7 +1470,7 @@ bot.on('text', async (ctx) => {
         );
         try {
           await bot.telegram.sendMessage(subUser.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-          await bot.telegram.sendMessage(subUser.telegramId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getMainMenu('user') });
+          await bot.telegram.sendMessage(subUser.telegramId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
         } catch (e) {
           logger.warn('Could not send menu to new user:', e.message);
         }
@@ -1485,7 +1481,7 @@ bot.on('text', async (ctx) => {
           '❌ Failed to add employee. Please try again.',
           { ...getMainMenu(ctx.state.user?.role) }
         ).catch(() => {
-          ctx.reply('❌ Failed to add employee. Please try again.', { ...getMainMenu(ctx.state.user?.role) });
+          ctx.reply('❌ Failed to add employee. Please try again.');
         });
       }
       return;
@@ -1611,7 +1607,7 @@ bot.on('text', async (ctx) => {
               pdfSent = true;
 
               const user = ctx.state.user;
-              const menu = getMainMenu(user.role);
+              const menu = getReplyKeyboard(user.role);
               const title = getPanelTitle(user.role);
               await ctx.reply(title, {
                 parse_mode: 'Markdown',
@@ -1667,7 +1663,7 @@ bot.on('text', async (ctx) => {
               ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
               const user = ctx.state.user;
-              const menu = getMainMenu(user.role);
+              const menu = getReplyKeyboard(user.role);
               const title = getPanelTitle(user.role);
               await ctx.reply(title, { parse_mode: 'Markdown', ...menu });
             } catch (syncError2) {
@@ -1684,7 +1680,7 @@ bot.on('text', async (ctx) => {
           if (!pdfSent) {
             ctx.session = ctx.session || {}; ctx.session.step = null;
             const user = ctx.state.user;
-            const menu = getMainMenu(user.role);
+            const menu = getReplyKeyboard(user.role);
             const title = getPanelTitle(user.role);
             await ctx.reply(`✅ Your request has been queued. You will receive your PDF shortly.\n\n${title}`, {
               parse_mode: 'Markdown',
@@ -1714,7 +1710,7 @@ bot.on('text', async (ctx) => {
     }
   } catch (error) {
     logger.error('Text handler error:', error);
-    ctx.reply('❌ An error occurred. Please try again.', { ...getMainMenu(ctx.state?.user?.role || 'user') });
+    ctx.reply('❌ An error occurred. Please try again.');
   }
 });
 
