@@ -24,7 +24,7 @@ const { Markup } = require('telegraf');
 
 const bot = require('./bot');
 const User = require('./models/User');
-const auth = require('./middleware/auth');
+// auth middleware removed — authorization is handled inline in bot.use()
 const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
 const { validateFaydaId, validateOTP, escMd, displayName } = require('./utils/validators');
@@ -220,7 +220,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   }
   if (user.addedBy) await User.updateOne({ telegramId: user.addedBy }, { $pull: { subUsers: tid } });
   const expiry = new Date();
-  expiry.setDate(expiry.getDate() + parseInt(expiryDays) || 30);
+  expiry.setDate(expiry.getDate() + (parseInt(expiryDays) || 30));
   user.role = 'admin';
   user.addedBy = undefined;
   user.expiryDate = expiry;
@@ -229,7 +229,7 @@ app.post('/add-buyer', requireWebAuth, async (req, res) => {
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
     await bot.telegram.sendMessage(tid, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getReplyKeyboard('admin') });
-  } catch (e) { }
+  } catch (e) { logger.warn('Could not notify new admin:', e.message); }
   res.redirect('/dashboard');
 });
 app.get('/buyer/:id', requireWebAuth, async (req, res) => {
@@ -262,11 +262,12 @@ app.post('/buyer/:id/add-sub', requireWebAuth, async (req, res) => {
   const subExpiry = new Date();
   subExpiry.setDate(subExpiry.getDate() + days);
   subUser.expiryDate = subExpiry;
+
   await subUser.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
     await bot.telegram.sendMessage(tid, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
-  } catch (e) { }
+  } catch (e) { logger.warn('Could not notify new sub-user:', e.message); }
   res.redirect(`/buyer/${req.params.id}`);
 });
 app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, async (req, res) => {
@@ -368,17 +369,23 @@ app.get('/export-users', requireWebAuth, async (req, res) => {
     const s = String(val ?? '');
     return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
   }
-  let csv = 'Telegram ID,Role,Name,Username,Expiry,Last Active,Downloads\n';
+  let csv = 'Telegram ID,Role,Name,Username,Expiry,Last Active,Downloads,Archived Downloads\n';
   users.forEach(u => {
-    csv += `${u.telegramId},${u.role},${csvEscape((u.firstName || '') + ' ' + (u.lastName || ''))},@${u.telegramUsername || ''},${u.expiryDate || ''},${u.lastActive || ''},${u.downloadCount || 0}\n`;
+    csv += `${u.telegramId},${u.role},${csvEscape((u.firstName || '') + ' ' + (u.lastName || ''))},@${u.telegramUsername || ''},${u.expiryDate || ''},${u.lastActive || ''},${u.downloadCount || 0},${u.archivedSubDownloads || 0}\n`;
   });
   res.setHeader('Content-Type', 'text/csv');
   res.attachment('users.csv');
   res.send(csv);
 });
 
+// ---------- Global Express Error Handler ----------
+app.use((err, req, res, _next) => {
+  logger.error('Unhandled web error:', { message: err.message, stack: err.stack, path: req.path });
+  res.status(500).send('Something went wrong. Please try again later.');
+});
+
 // ---------- Constants ----------
-const API_BASE = fayda.API_BASE;
+// API_BASE removed — accessed directly via fayda.api
 const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
 const HEADERS = fayda.HEADERS;
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
@@ -453,7 +460,7 @@ bot.use(async (ctx, next) => {
           lastActive: new Date()
         },
         $inc: { usageCount: 1 },
-        $setOnInsert: { role: 'unauthorized', isWaitingApproval: true, createdAt: new Date() }
+        $setOnInsert: { role: 'unauthorized', createdAt: new Date() }
       },
       { upsert: true, new: true }
     );
@@ -841,7 +848,8 @@ async function handleDashboard(ctx, isInline) {
 
   const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
   const buyerOwn = buyer.downloadCount || 0;
-  const total = buyerOwn + subDownloads;
+  const archived = buyer.archivedSubDownloads || 0;
+  const total = buyerOwn + subDownloads + archived;
   const { items: pageSubs, page: p, totalPages } = paginate(subs, 1);
 
   let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
@@ -895,7 +903,8 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
       .exec();
     const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
     const buyerOwn = buyer.downloadCount || 0;
-    const total = buyerOwn + subDownloads;
+    const archived = buyer.archivedSubDownloads || 0;
+    const total = buyerOwn + subDownloads + archived;
     const { items: pageSubs, page: p, totalPages } = paginate(subs, page);
     let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
     text += `Admin: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
@@ -1161,11 +1170,13 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
       ]));
     }
 
-    // Archive sub-user downloads before deletion
+    // Archive sub-user downloads before deletion (atomic operation)
     const sub = await User.findOne({ telegramId: subId }).select('downloadCount').lean();
-    admin.subUsers = (admin.subUsers || []).filter(id => id !== subId);
-    admin.archivedSubDownloads = (admin.archivedSubDownloads || 0) + (sub?.downloadCount || 0);
-    await admin.save();
+    const dlCount = sub?.downloadCount || 0;
+    await User.findOneAndUpdate(
+      { telegramId: adminId },
+      { $pull: { subUsers: subId }, $inc: { archivedSubDownloads: dlCount } }
+    );
     await User.deleteOne({ telegramId: subId });
 
     await ctx.editMessageText(`✅ Sub‑user removed successfully.`, Markup.inlineKeyboard([
@@ -1285,11 +1296,13 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     const subId = ctx.match[1];
     const buyer = ctx.state.user;
 
-    // Archive sub-user downloads before deletion
+    // Archive sub-user downloads before deletion (atomic operation)
     const sub = await User.findOne({ telegramId: subId }).select('downloadCount').lean();
-    buyer.subUsers = (buyer.subUsers || []).filter(id => id !== subId);
-    buyer.archivedSubDownloads = (buyer.archivedSubDownloads || 0) + (sub?.downloadCount || 0);
-    await buyer.save();
+    const dlCount = sub?.downloadCount || 0;
+    await User.findOneAndUpdate(
+      { telegramId: buyer.telegramId },
+      { $pull: { subUsers: subId }, $inc: { archivedSubDownloads: dlCount } }
+    );
     await User.deleteOne({ telegramId: subId });
 
     await ctx.editMessageText(`✅ Sub‑user removed.`, Markup.inlineKeyboard([

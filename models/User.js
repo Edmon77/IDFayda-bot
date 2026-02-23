@@ -14,7 +14,7 @@ const userSchema = new mongoose.Schema({
   addedBy: { type: String, index: true },
   expiryDate: { type: Date, index: true },
   subUsers: [{ type: String }],
-  isWaitingApproval: { type: Boolean, default: false, index: true },
+  // isWaitingApproval removed — pending users are identified by role: 'unauthorized'
   createdAt: { type: Date, default: Date.now, index: true },
   lastActive: { type: Date, index: true },
   usageCount: { type: Number, default: 0 },

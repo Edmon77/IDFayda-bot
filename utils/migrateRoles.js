@@ -16,7 +16,7 @@ async function migrateRoles() {
     if (r2.modifiedCount) logger.info(`Migrated ${r2.modifiedCount} buyer → admin`);
     const r3 = await User.updateMany({ role: 'sub' }, { $set: { role: 'user' } });
     if (r3.modifiedCount) logger.info(`Migrated ${r3.modifiedCount} sub → user`);
-    const r4 = await User.updateMany({ role: 'pending' }, { $set: { role: 'unauthorized', isWaitingApproval: true } });
+    const r4 = await User.updateMany({ role: 'pending' }, { $set: { role: 'unauthorized' } });
     if (r4.modifiedCount) logger.info(`Migrated ${r4.modifiedCount} pending → unauthorized`);
     // Sync parentAdmin from addedBy for users
     const users = await User.find({ role: 'user', addedBy: { $exists: true, $nin: [null, ''] } }).select('telegramId addedBy').lean();
