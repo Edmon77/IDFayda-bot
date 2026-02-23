@@ -29,7 +29,7 @@ const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
 const { validateFaydaId, validateOTP, escMd, displayName } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
-const { BTN, getReplyKeyboard, getMainMenu, getPanelTitle, paginate } = require('./utils/menu');
+const { BTN, getReplyKeyboard, getPanelTitle, paginate } = require('./utils/menu');
 const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
@@ -400,15 +400,6 @@ async function adminGuard(ctx) {
 }
 
 // ---------- Send Menu Helper (delete previous menu to prevent clutter) ----------
-async function sendMenu(ctx, text, options) {
-  const prevId = ctx.session?.lastMenuMsgId;
-  if (prevId) {
-    ctx.deleteMessage(prevId).catch(() => { });
-  }
-  const msg = await ctx.reply(text, options);
-  if (ctx.session) ctx.session.lastMenuMsgId = msg.message_id;
-  return msg;
-}
 
 // ---------- Start Command – Show Reply Keyboard ----------
 bot.start(async (ctx) => {
@@ -1158,15 +1149,13 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
     ctx.session = ctx.session || {}; ctx.session.step = null;
     const admin = await User.findOne({ telegramId: adminId }).lean();
     if (!admin) {
-      const menu = getMainMenu(ctx.state.user?.role);
-      const title = getPanelTitle(ctx.state.user?.role);
-      return ctx.editMessageText(`❌ Cancelled.\n\n${title}`, { parse_mode: 'Markdown', ...menu });
+      return ctx.editMessageText('❌ Cancelled. Admin no longer found.');
     }
     const subs = await User.find({ telegramId: { $in: admin.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
       .lean()
       .exec();
-    let text = `**Managing:** ${escMd(admin.firstName) || 'N/A'} (@${escMd(admin.telegramUsername) || 'N/A'})\n`;
+    let text = `** Managing:** ${escMd(admin.firstName) || 'N/A'} (@${escMd(admin.telegramUsername) || 'N/A'}) \n`;
     text += `ID: \`${admin.telegramId}\`\n`;
     text += `PDFs: ${admin.downloadCount || 0} | Users: ${subs.length}\n\n`;
     text += `**Sub‑Users:**\n`;
@@ -1246,15 +1235,13 @@ bot.on('text', async (ctx) => {
         if (!user) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '⚠️ This user hasn\'t started the bot yet. Ask them to send /start first.'
           );
         }
         if (user.role === 'admin') {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ This user is already an admin.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ This user is already an admin.'
           );
         }
         if (user.addedBy) {
@@ -1268,10 +1255,9 @@ bot.on('text', async (ctx) => {
         user.subUsers = [];
         await user.save();
         ctx.session = ctx.session || {}; ctx.session.step = null;
-        const title = getPanelTitle(ctx.state.user?.role);
         await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-          `✅ **${displayName(user)}** added as admin (30 days).\n\n${title}`,
-          { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) }
+          `✅ **${displayName(user)}** added as admin (30 days).`,
+          { parse_mode: 'Markdown' }
         );
         try {
           await bot.telegram.sendMessage(user.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
@@ -1283,8 +1269,7 @@ bot.on('text', async (ctx) => {
         logger.error('Add buyer error:', error);
         ctx.session = ctx.session || {}; ctx.session.step = null;
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-          '❌ Failed to add buyer. Please try again.',
-          { ...getMainMenu(ctx.state.user?.role) }
+          '❌ Failed to add buyer. Please try again.'
         ).catch(() => {
           ctx.reply('❌ Failed to add buyer. Please try again.');
         });
@@ -1324,34 +1309,29 @@ bot.on('text', async (ctx) => {
         if (!admin) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ Admin no longer found. Cancelled.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ Admin no longer found. Cancelled.'
           );
         }
         const targetUser = await User.findOne({ telegramId: userId });
         if (!targetUser) {
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ That user has not started the bot yet. Ask them to send /start first.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ That user has not started the bot yet. Ask them to send /start first.'
           );
         }
         if (targetUser.role === 'admin') {
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ That ID belongs to an admin. Choose a regular user.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ That ID belongs to an admin. Choose a regular user.'
           );
         }
         if ((admin.subUsers || []).includes(userId)) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ This user is already under this admin.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ This user is already under this admin.'
           );
         }
         if ((admin.subUsers || []).length >= 9) {
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ This admin already has 9 users.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ This admin already has 9 users.'
           );
         }
         if (targetUser.addedBy) {
@@ -1366,10 +1346,9 @@ bot.on('text', async (ctx) => {
         targetUser.expiryDate = admin.expiryDate;
         await targetUser.save();
         ctx.session = ctx.session || {}; ctx.session.step = null;
-        const title = getPanelTitle(ctx.state.user?.role);
         await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-          `✅ **${escMd(targetUser.firstName) || targetUser.telegramId}** added under admin **${escMd(admin.firstName) || adminId}**.\n\n${title}`,
-          { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) }
+          `✅ **${escMd(targetUser.firstName) || targetUser.telegramId}** added under admin **${escMd(admin.firstName) || adminId}**.`,
+          { parse_mode: 'Markdown' }
         );
         try {
           await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
@@ -1381,8 +1360,7 @@ bot.on('text', async (ctx) => {
         logger.error('Add user under admin error:', error);
         ctx.session = ctx.session || {}; ctx.session.step = null;
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-          '❌ Failed to add user. Please try again.',
-          { ...getMainMenu(ctx.state.user?.role) }
+          '❌ Failed to add user. Please try again.'
         ).catch(() => {
           ctx.reply('❌ Failed to add user. Please try again.');
         });
@@ -1402,8 +1380,7 @@ bot.on('text', async (ctx) => {
 
       const telegramId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(telegramId)) {
-        const menu = getMainMenu(ctx.state.user?.role);
-        return ctx.reply('❌ Please enter a numeric Telegram ID (e.g. 5434080792).', { ...menu });
+        return ctx.reply('❌ Please enter a numeric Telegram ID (e.g. 5434080792).');
       }
 
       const statusMsg = await ctx.reply('🔍 Looking up user...');
@@ -1413,23 +1390,20 @@ bot.on('text', async (ctx) => {
         if (!subUser) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            "⚠️ This user hasn't started the bot yet.\n\nAsk them to send /start to the bot first.",
-            { ...getMainMenu(ctx.state.user?.role) }
+            "⚠️ This user hasn't started the bot yet.\n\nAsk them to send /start to the bot first."
           );
         }
 
         if ((buyer.subUsers || []).length >= 9) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ This buyer already has 9 employees.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ This buyer already has 9 employees.'
           );
         }
         if ((buyer.subUsers || []).includes(subUser.telegramId)) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ This user is already an employee of this buyer.',
-            { ...getMainMenu(ctx.state.user?.role) }
+            '❌ This user is already an employee of this buyer.'
           );
         }
 
@@ -1444,10 +1418,8 @@ bot.on('text', async (ctx) => {
         await subUser.save();
 
         ctx.session = ctx.session || {}; ctx.session.step = null;
-        const title = getPanelTitle(ctx.state.user?.role);
         await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-          `✅ User added successfully!\n\n${title}`,
-          { parse_mode: 'Markdown', ...getMainMenu(ctx.state.user?.role) }
+          '✅ User added successfully!'
         );
         try {
           await bot.telegram.sendMessage(subUser.telegramId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
@@ -1459,8 +1431,7 @@ bot.on('text', async (ctx) => {
         logger.error('Add sub error:', error);
         ctx.session = ctx.session || {}; ctx.session.step = null;
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-          '❌ Failed to add employee. Please try again.',
-          { ...getMainMenu(ctx.state.user?.role) }
+          '❌ Failed to add employee. Please try again.'
         ).catch(() => {
           ctx.reply('❌ Failed to add employee. Please try again.');
         });
@@ -1586,14 +1557,6 @@ bot.on('text', async (ctx) => {
               );
               ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
-
-              const user = ctx.state.user;
-              const menu = getReplyKeyboard(user.role);
-              const title = getPanelTitle(user.role);
-              await ctx.reply(title, {
-                parse_mode: 'Markdown',
-                ...menu
-              });
             } catch (syncErr) {
               lastSyncError = syncErr;
               if (attempt < PDF_SYNC_ATTEMPTS) {
@@ -1643,10 +1606,6 @@ bot.on('text', async (ctx) => {
               );
               ctx.session = ctx.session || {}; ctx.session.step = null;
               pdfSent = true;
-              const user = ctx.state.user;
-              const menu = getReplyKeyboard(user.role);
-              const title = getPanelTitle(user.role);
-              await ctx.reply(title, { parse_mode: 'Markdown', ...menu });
             } catch (syncError2) {
               logger.error('Synchronous PDF processing failed:', {
                 error: syncError2.message,
@@ -1660,13 +1619,7 @@ bot.on('text', async (ctx) => {
           // Only show "queued" message if we didn't send PDF (queue was used)
           if (!pdfSent) {
             ctx.session = ctx.session || {}; ctx.session.step = null;
-            const user = ctx.state.user;
-            const menu = getReplyKeyboard(user.role);
-            const title = getPanelTitle(user.role);
-            await ctx.reply(`✅ Your request has been queued. You will receive your PDF shortly.\n\n${title}`, {
-              parse_mode: 'Markdown',
-              ...menu
-            });
+            await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.');
           }
         }
       } catch (e) {
