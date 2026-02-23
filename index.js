@@ -1203,7 +1203,7 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
 bot.on('text', async (ctx) => {
   try {
     const state = ctx.session;
-    if (!state) {
+    if (!state || !state.step) {
       return;
     }
 

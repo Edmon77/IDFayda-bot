@@ -1,13 +1,14 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const Redis = require('ioredis');
+const IORedis = require('ioredis');
+const logger = require('./utils/logger');
 
 const bot = new Telegraf(process.env.BOT_TOKEN, {
   handlerTimeout: 180000 // 180 seconds (3 minutes)
 });
 
 // Redis-backed session so download/OTP flows survive restarts
-const redisSession = new Redis(process.env.REDIS_URL, {
+const redisSession = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
   retryStrategy: (times) => Math.min(times * 100, 3000)
@@ -42,7 +43,7 @@ function redisSessionMiddleware() {
         await redisSession.set(key, after, 'EX', SESSION_TTL);
       }
     } catch (e) {
-      // Silently fail — session save is best-effort
+      logger.warn('Redis session save/delete failed:', e.message);
     }
   };
 }
