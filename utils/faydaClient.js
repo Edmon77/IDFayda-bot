@@ -1,16 +1,14 @@
 /**
- * Shared HTTP client for Fayda API with keep-alive connections,
- * DNS caching, and response compression.
+ * Shared HTTP client for Fayda API with keep-alive connections
+ * and response compression.
  *
  * Optimizations:
  *   - keep-alive:   Reuses TCP connections across requests
- *   - DNS caching:  Avoids redundant DNS lookups (cacheable-lookup)
  *   - compression:  Requests gzip/deflate responses (~60-70% smaller PDF payloads)
  */
 const axios = require('axios');
 const http = require('http');
 const https = require('https');
-const CacheableLookup = require('cacheable-lookup');
 
 const API_BASE = 'https://api-resident.fayda.et';
 const HEADERS = {
@@ -21,15 +19,8 @@ const HEADERS = {
   'Accept-Encoding': 'gzip, deflate, br'
 };
 
-// DNS caching — avoids repeated DNS lookups for api-resident.fayda.et
-const cacheable = new CacheableLookup();
-
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
-
-// Install DNS cache on both agents
-cacheable.install(httpAgent);
-cacheable.install(httpsAgent);
 
 const api = axios.create({
   baseURL: API_BASE,

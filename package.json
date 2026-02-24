@@ -15,7 +15,6 @@
     "2captcha": "^3.0.6",
     "axios": "^1.6.7",
     "bull": "^4.12.2",
-    "cacheable-lookup": "^7.0.0",
     "connect-mongo": "^5.1.0",
     "dotenv": "^16.3.1",
     "ejs": "^3.1.9",
