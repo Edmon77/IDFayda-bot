@@ -34,10 +34,11 @@ const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
 const { DownloadTimer } = require('./utils/timer');
+const { CaptchaPool } = require('./utils/captchaPool');
 
 const PDF_SYNC_ATTEMPTS = 2;
 const PDF_SYNC_RETRY_DELAY_MS = 2000;
-const CAPTCHA_VERIFY_ATTEMPTS = 1;   // Verification is state-changing (triggers OTP) — do NOT auto-retry on 400/500
+const CAPTCHA_VERIFY_ATTEMPTS = 2;   // Retry on 500 (server) errors only — abort on 400 (client) errors
 const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
 const VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes between verification attempts
 
@@ -408,6 +409,7 @@ app.use((err, req, res, _next) => {
 const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
 const HEADERS = fayda.HEADERS;
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
+const captchaPool = new CaptchaPool(solver, SITE_KEY, 'https://resident.fayda.et/');
 const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
 
 // ---------- Error Handler Middleware ----------
@@ -1657,7 +1659,7 @@ bot.on('text', async (ctx) => {
         }
         try {
           timer.startStep('captchaSolve');
-          const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
+          const captchaToken = await captchaPool.get();
           timer.endStep('captchaSolve');
 
           timer.startStep('idVerification');
@@ -1665,7 +1667,7 @@ bot.on('text', async (ctx) => {
           const res = await fayda.api.post('/verify', {
             idNumber: validation.value,
             verificationMethod: validation.type || 'FCN',
-            captchaValue: result.data
+            captchaValue: captchaToken
           }, { timeout: 35000 });
           timer.endStep('idVerification');
 
@@ -1690,6 +1692,13 @@ bot.on('text', async (ctx) => {
           lastErr = e;
           const errMsg = e.response?.data?.message || e.message || 'Verification failed';
           logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed`, { error: errMsg });
+
+          // Smart retry: only retry on server errors (5xx) — abort on client errors (4xx)
+          const status4xx = e.response?.status >= 400 && e.response?.status < 500;
+          if (status4xx) {
+            logger.warn('ID verification returned 4xx, aborting retries', { status: e.response?.status });
+            break;
+          }
         }
       }
       if (!verified) {
@@ -1953,6 +1962,7 @@ async function gracefulShutdown(signal) {
     // bot.stop() only works with polling (bot.launch()), not webhooks
     // In webhook mode the bot is not "running" so stop() throws
     try { await bot.stop(signal); } catch (_) { /* webhook mode — ignore */ }
+    captchaPool.stop();
     await disconnectDB();
     await pdfQueue.close();
     process.exit(0);
@@ -1971,6 +1981,7 @@ async function startServer() {
     // Connect to database
     await connectDB();
     await migrateRoles();
+    captchaPool.start();
 
     // Set webhook
     const webhookPath = '/webhook';
