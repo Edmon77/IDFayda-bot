@@ -15,7 +15,7 @@ const logger = require('./logger');
 const POOL_SIZE = parseInt(process.env.CAPTCHA_POOL_SIZE, 10) || 3;
 const TOKEN_TTL_MS = 90_000;           // discard tokens older than 90s
 const REFILL_INTERVAL_MS = 30_000;     // check pool every 30s
-const SOLVE_TIMEOUT_MS = 60_000;       // give up on a single solve after 60s
+const SOLVE_TIMEOUT_MS = 120_000;      // give up on a single solve after 120s (solves can take up to 90s)
 
 class CaptchaPool {
     /**
