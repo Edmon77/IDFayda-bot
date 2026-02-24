@@ -37,11 +37,14 @@ const { DownloadTimer } = require('./utils/timer');
 
 const PDF_SYNC_ATTEMPTS = 2;
 const PDF_SYNC_RETRY_DELAY_MS = 2000;
-const CAPTCHA_VERIFY_ATTEMPTS = 3;
+const CAPTCHA_VERIFY_ATTEMPTS = 1;   // Verification is state-changing (triggers OTP) — do NOT auto-retry on 400/500
 const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
+const VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes between verification attempts
 
 // Per-user download lock — prevents concurrent downloads and webhook replay storms
 const activeDownloads = new Map(); // telegramId → true
+// Per-user verification cooldown — prevents OTP flood on Fayda API
+const verificationCooldown = new Map(); // telegramId → timestamp of last failure
 
 // ---------- Express App ----------
 const app = express();
@@ -565,6 +568,17 @@ bot.command('cancel', async (ctx) => {
 // ---------- Download Handler (shared by inline button and reply keyboard) ----------
 async function handleDownload(ctx, isInline) {
   ctx.session = ctx.session || {};
+  // If user already has a download in progress, don't reset their session
+  const userId = ctx.from.id.toString();
+  if (activeDownloads.has(userId)) {
+    const msg = '⏳ You already have a download in progress. Please wait.';
+    if (isInline) {
+      await ctx.answerCbQuery(msg, { show_alert: true }).catch(() => { });
+    } else {
+      await ctx.reply(msg);
+    }
+    return;
+  }
   ctx.session.step = 'ID';
   const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):";
   if (isInline) {
@@ -1596,6 +1610,14 @@ bot.on('text', async (ctx) => {
       if (activeDownloads.has(userId)) {
         return ctx.reply('⏳ You already have a download in progress. Please wait.');
       }
+
+      // Verification cooldown — prevent OTP flood on Fayda API
+      const lastFail = verificationCooldown.get(userId);
+      if (lastFail && (Date.now() - lastFail) < VERIFICATION_COOLDOWN_MS) {
+        const waitSec = Math.ceil((VERIFICATION_COOLDOWN_MS - (Date.now() - lastFail)) / 1000);
+        return ctx.reply(`⏳ Please wait ${waitSec} seconds before trying again.`);
+      }
+
       activeDownloads.set(userId, true);
 
       const timer = new DownloadTimer(userId);
@@ -1603,6 +1625,7 @@ bot.on('text', async (ctx) => {
 
       let verified = false;
       let lastErr;
+      let apiWasCalled = false; // Only set cooldown if we actually hit the Fayda API
       for (let attempt = 1; attempt <= CAPTCHA_VERIFY_ATTEMPTS && !verified; attempt++) {
         // Cancel-aware: if session step was cleared (e.g. /cancel), abort
         if (!ctx.session || ctx.session.step !== 'ID') {
@@ -1616,12 +1639,16 @@ bot.on('text', async (ctx) => {
           timer.endStep('captchaSolve');
 
           timer.startStep('idVerification');
+          apiWasCalled = true; // Mark that we're about to call the provider
           const res = await fayda.api.post('/verify', {
             idNumber: validation.value,
             verificationMethod: validation.type || 'FCN',
             captchaValue: result.data
           }, { timeout: 35000 });
           timer.endStep('idVerification');
+
+          // Success — clear cooldown
+          verificationCooldown.delete(userId);
 
           ctx.session.tempJwt = res.data.token;
           ctx.session.id = validation.value;
@@ -1641,19 +1668,20 @@ bot.on('text', async (ctx) => {
           lastErr = e;
           const errMsg = e.response?.data?.message || e.message || 'Verification failed';
           logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed`, { error: errMsg });
-          if (attempt < CAPTCHA_VERIFY_ATTEMPTS) {
-            await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, `⏳ Loading... retrying (${attempt}/${CAPTCHA_VERIFY_ATTEMPTS})`);
-            await new Promise(r => setTimeout(r, CAPTCHA_VERIFY_RETRY_DELAY_MS));
-          }
         }
       }
       if (!verified) {
         activeDownloads.delete(userId);
+        // Only set cooldown if we actually reached the Fayda API (not captcha failure or internal error)
+        if (apiWasCalled) verificationCooldown.set(userId, Date.now());
         const rawMsg = lastErr?.response?.data?.message || lastErr?.message || '';
-        const userMsg = /invalid|limit/i.test(rawMsg) ? 'Invalid ID' : (rawMsg || 'Verification failed');
+        const userMsg = /too many|limit|wait/i.test(rawMsg)
+          ? '⏳ Too many attempts. Please wait a few minutes before trying again.'
+          : /invalid/i.test(rawMsg) ? '❌ Invalid ID. Please check and try again.'
+            : `❌ Verification failed. Please try /start again.`;
         logger.error("ID verification error after retries:", { error: rawMsg, stack: lastErr?.stack });
         timer.report('id_verification_failed');
-        ctx.reply(`❌ Error: ${userMsg}\nTry /start again.`);
+        ctx.reply(userMsg);
         ctx.session = ctx.session || {}; ctx.session.step = null;
       }
       return;
