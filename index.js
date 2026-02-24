@@ -1777,7 +1777,7 @@ bot.on('text', async (ctx) => {
         timer.setPhase('userWaitMs', otpPhaseStart - idPhaseEnd);
       }
 
-      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Verifying OTP and generating document...");
+      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Verifying OTP...");
       const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
       let otpResponse;
@@ -1809,7 +1809,8 @@ bot.on('text', async (ctx) => {
           throw new Error('Missing signature or uin in OTP response');
         }
 
-        await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP Verified. Fetching ID file...");
+        // Non-blocking status update — PDF fetch starts immediately in parallel
+        ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP verified! Fetching your ID...").catch(() => { });
 
         // Under heavy load (PREFER_QUEUE_PDF=true) skip sync and always queue for controlled concurrency
         let pdfSent = false;
