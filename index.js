@@ -34,7 +34,6 @@ const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
 const { DownloadTimer } = require('./utils/timer');
-const { CaptchaPool } = require('./utils/captchaPool');
 
 const PDF_SYNC_ATTEMPTS = 2;
 const PDF_SYNC_RETRY_DELAY_MS = 2000;
@@ -46,6 +45,8 @@ const VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes between verificatio
 const activeDownloads = new Map(); // telegramId → true
 // Per-user verification cooldown — prevents OTP flood on Fayda API
 const verificationCooldown = new Map(); // telegramId → timestamp of last failure
+// Lazy pre-solve: captcha solve starts when user taps Download, ready by the time they type their ID
+const pendingCaptchas = new Map(); // telegramId → Promise<string>
 
 // ---------- Express App ----------
 const app = express();
@@ -409,7 +410,7 @@ app.use((err, req, res, _next) => {
 const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
 const HEADERS = fayda.HEADERS;
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
-const captchaPool = new CaptchaPool(solver, SITE_KEY, 'https://resident.fayda.et/');
+
 const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
 
 // ---------- Error Handler Middleware ----------
@@ -582,6 +583,13 @@ async function handleDownload(ctx, isInline) {
     return;
   }
   ctx.session.step = 'ID';
+
+  // Lazy pre-solve: start captcha solve NOW while user types their ID (5-15s of free overlap)
+  pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/').then(r => r.data).catch(err => {
+    logger.warn('Pre-solve captcha failed, will solve on-demand', { error: err.message });
+    return null; // null signals fallback to on-demand
+  }));
+
   const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):";
   if (isInline) {
     await ctx.editMessageText(text, { parse_mode: 'Markdown' });
@@ -1659,7 +1667,17 @@ bot.on('text', async (ctx) => {
         }
         try {
           timer.startStep('captchaSolve');
-          const captchaToken = await captchaPool.get();
+          // Use pre-solved captcha from handleDownload if available, else solve fresh
+          let captchaToken = null;
+          if (attempt === 1 && pendingCaptchas.has(userId)) {
+            captchaToken = await pendingCaptchas.get(userId);
+            pendingCaptchas.delete(userId);
+          }
+          if (!captchaToken) {
+            // Fallback: solve on-demand (pre-solve failed or this is a retry)
+            const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
+            captchaToken = result.data;
+          }
           timer.endStep('captchaSolve');
 
           timer.startStep('idVerification');
@@ -1962,7 +1980,7 @@ async function gracefulShutdown(signal) {
     // bot.stop() only works with polling (bot.launch()), not webhooks
     // In webhook mode the bot is not "running" so stop() throws
     try { await bot.stop(signal); } catch (_) { /* webhook mode — ignore */ }
-    captchaPool.stop();
+
     await disconnectDB();
     await pdfQueue.close();
     process.exit(0);
@@ -1981,7 +1999,7 @@ async function startServer() {
     // Connect to database
     await connectDB();
     await migrateRoles();
-    captchaPool.start();
+
 
     // Set webhook
     const webhookPath = '/webhook';
