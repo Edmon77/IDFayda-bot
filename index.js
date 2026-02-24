@@ -36,9 +36,12 @@ const { safeResponseForLog } = require('./utils/logger');
 const { DownloadTimer } = require('./utils/timer');
 
 const PDF_SYNC_ATTEMPTS = 2;
-const PDF_SYNC_RETRY_DELAY_MS = 1500;
+const PDF_SYNC_RETRY_DELAY_MS = 2000;
 const CAPTCHA_VERIFY_ATTEMPTS = 3;
 const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
+
+// Per-user download lock — prevents concurrent downloads and webhook replay storms
+const activeDownloads = new Map(); // telegramId → true
 
 // ---------- Express App ----------
 const app = express();
@@ -546,6 +549,8 @@ bot.start(async (ctx) => {
 async function handleCancel(ctx) {
   ctx.session = ctx.session || {};
   ctx.session.step = null;
+  // Release download lock so user can start fresh
+  activeDownloads.delete(ctx.from.id.toString());
   await ctx.reply('❌ Cancelled.');
 }
 
@@ -1585,12 +1590,26 @@ bot.on('text', async (ctx) => {
         return ctx.reply(`❌ ${validation.error}`, { parse_mode: 'Markdown' });
       }
 
-      const timer = new DownloadTimer(ctx.from.id.toString());
+      const userId = ctx.from.id.toString();
+
+      // Per-user download lock — reject if already downloading
+      if (activeDownloads.has(userId)) {
+        return ctx.reply('⏳ You already have a download in progress. Please wait.');
+      }
+      activeDownloads.set(userId, true);
+
+      const timer = new DownloadTimer(userId);
       const status = await ctx.reply("⏳ Loading...");
 
       let verified = false;
       let lastErr;
       for (let attempt = 1; attempt <= CAPTCHA_VERIFY_ATTEMPTS && !verified; attempt++) {
+        // Cancel-aware: if session step was cleared (e.g. /cancel), abort
+        if (!ctx.session || ctx.session.step !== 'ID') {
+          logger.info('Download cancelled by user during ID verification');
+          activeDownloads.delete(userId);
+          return;
+        }
         try {
           timer.startStep('captchaSolve');
           const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
@@ -1615,12 +1634,13 @@ bot.on('text', async (ctx) => {
           ctx.session._timer = timer.toSession();
 
           await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "Enter the OTP sent to your phone:\n_Send /cancel to return to menu._", { parse_mode: 'Markdown' });
+          // Keep download lock — will be released after OTP step completes
         } catch (e) {
           timer.endStep('captchaSolve');   // no-op if already ended
           timer.endStep('idVerification'); // no-op if not started
           lastErr = e;
           const errMsg = e.response?.data?.message || e.message || 'Verification failed';
-          logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed:`, errMsg);
+          logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed`, { error: errMsg });
           if (attempt < CAPTCHA_VERIFY_ATTEMPTS) {
             await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, `⏳ Loading... retrying (${attempt}/${CAPTCHA_VERIFY_ATTEMPTS})`);
             await new Promise(r => setTimeout(r, CAPTCHA_VERIFY_RETRY_DELAY_MS));
@@ -1628,6 +1648,7 @@ bot.on('text', async (ctx) => {
         }
       }
       if (!verified) {
+        activeDownloads.delete(userId);
         const rawMsg = lastErr?.response?.data?.message || lastErr?.message || '';
         const userMsg = /invalid|limit/i.test(rawMsg) ? 'Invalid ID' : (rawMsg || 'Verification failed');
         logger.error("ID verification error after retries:", { error: rawMsg, stack: lastErr?.stack });
@@ -1645,6 +1666,7 @@ bot.on('text', async (ctx) => {
         return; // Already processing, ignore duplicate
       }
       state.processingOTP = true;
+      const userId = ctx.from.id.toString();
 
       const validation = validateOTP(text);
       if (!validation.valid) {
@@ -1681,7 +1703,7 @@ bot.on('text', async (ctx) => {
         } catch (e) {
           const isRetryable = !e.response || (e.response.status >= 500 && e.response.status < 600) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
           if (attempt === otpAttempts || !isRetryable) throw e;
-          logger.warn(`validateOtp attempt ${attempt} failed, retrying:`, e.message);
+          logger.warn(`validateOtp attempt ${attempt} failed, retrying`, { error: e.message });
           await new Promise(r => setTimeout(r, 2000));
         }
       }
@@ -1700,6 +1722,12 @@ bot.on('text', async (ctx) => {
         let lastSyncError;
         if (!PREFER_QUEUE_PDF) {
           for (let attempt = 1; attempt <= PDF_SYNC_ATTEMPTS && !pdfSent; attempt++) {
+            // Cancel-aware: if session was cleared (e.g. /cancel), abort
+            if (!ctx.session || ctx.session.step !== 'OTP') {
+              logger.info('Download cancelled by user during PDF fetch');
+              activeDownloads.delete(userId);
+              return;
+            }
             try {
               timer.startStep('pdfFetch');
               const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
@@ -1724,19 +1752,29 @@ bot.on('text', async (ctx) => {
               timer.endStep('telegramUpload');
 
               await User.updateOne(
-                { telegramId: ctx.from.id.toString() },
+                { telegramId: userId },
                 { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
               );
               ctx.session = ctx.session || {}; ctx.session.step = null;
+              activeDownloads.delete(userId);
               pdfSent = true;
             } catch (syncErr) {
               timer.endStep('pdfFetch');      // no-op if already ended
               timer.endStep('pdfConversion'); // no-op if not started
               timer.endStep('telegramUpload');
               lastSyncError = syncErr;
+
+              // 400 = session/token invalid — abort immediately, no point retrying
+              const status4xx = syncErr.response?.status >= 400 && syncErr.response?.status < 500;
+              if (status4xx) {
+                logger.warn('PDF fetch returned 4xx, aborting', { status: syncErr.response?.status, error: syncErr.message });
+                break; // skip to queue/failure path
+              }
+
               if (attempt < PDF_SYNC_ATTEMPTS) {
-                logger.warn(`Sync PDF attempt ${attempt} failed, retrying:`, syncErr.message);
-                await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Retrying PDF fetch...");
+                logger.warn(`Sync PDF attempt ${attempt} failed, retrying`, { error: syncErr.message });
+                // Show user one clean message — no attempt counts
+                await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Please wait… processing your document.").catch(() => { });
                 await new Promise(r => setTimeout(r, PDF_SYNC_RETRY_DELAY_MS));
               }
             }
@@ -1792,6 +1830,7 @@ bot.on('text', async (ctx) => {
                 { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
               );
               ctx.session = ctx.session || {}; ctx.session.step = null;
+              activeDownloads.delete(userId);
               pdfSent = true;
               timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
               timer.report('success_after_queue_fallback');
@@ -1805,8 +1844,9 @@ bot.on('text', async (ctx) => {
               });
               timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
               timer.report('failed');
-              await ctx.reply(`❌ Could not generate PDF: ${syncError2.response?.data?.message || syncError2.message}. Please try /start again.`);
+              await ctx.reply('❌ Download failed. Please try /start again.');
               ctx.session = ctx.session || {}; ctx.session.step = null;
+              activeDownloads.delete(userId);
             }
           }
 
@@ -1815,6 +1855,7 @@ bot.on('text', async (ctx) => {
             timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
             timer.report('queued');
             ctx.session = ctx.session || {}; ctx.session.step = null;
+            activeDownloads.delete(userId);
             await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.');
           }
         }
@@ -1833,6 +1874,7 @@ bot.on('text', async (ctx) => {
           logger.error('Failed to send error message:', replyError);
         }
         ctx.session = ctx.session || {}; ctx.session.step = null;
+        activeDownloads.delete(userId);
       } finally {
         // Always clear processing flag
         if (state) {
@@ -1842,7 +1884,13 @@ bot.on('text', async (ctx) => {
       return;
     }
   } catch (error) {
-    logger.error('Text handler error:', error);
+    logger.error('Text handler error:', {
+      message: error.message,
+      stack: error.stack,
+      status: error.response?.status,
+      response: safeResponseForLog(error.response?.data)
+    });
+    activeDownloads.delete(ctx.from?.id?.toString());
     ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
@@ -1852,12 +1900,14 @@ async function gracefulShutdown(signal) {
   logger.info(`${signal} received, starting graceful shutdown...`);
 
   try {
-    await bot.stop(signal);
+    // bot.stop() only works with polling (bot.launch()), not webhooks
+    // In webhook mode the bot is not "running" so stop() throws
+    try { await bot.stop(signal); } catch (_) { /* webhook mode — ignore */ }
     await disconnectDB();
     await pdfQueue.close();
     process.exit(0);
   } catch (error) {
-    logger.error('Error during shutdown:', error);
+    logger.error('Error during shutdown:', { message: error.message, stack: error.stack });
     process.exit(1);
   }
 }
