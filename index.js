@@ -9,7 +9,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 process.on('uncaughtException', (err) => {
   logger.error('Uncaught Exception', { message: err.message, stack: err.stack });
-  // Don't exit - allow bot to keep serving other users (exit only on next fatal)
+  // Don't exit - allow bot to keep serving other users (exit only on next fatall)
   // process.exit(1);
 });
 
