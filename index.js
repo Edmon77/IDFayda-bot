@@ -408,6 +408,7 @@ app.use((err, req, res, _next) => {
 // ---------- Constants ----------
 // API_BASE removed — accessed directly via fayda.api
 const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
+const RECAPTCHA_OPTS = { version: 'v3', action: 'verify', min_score: 0.5 };
 const HEADERS = fayda.HEADERS;
 const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
 
@@ -585,7 +586,7 @@ async function handleDownload(ctx, isInline) {
   ctx.session.step = 'ID';
 
   // Lazy pre-solve: start captcha solve NOW while user types their ID (5-15s of free overlap)
-  pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/').then(r => r.data).catch(err => {
+  pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
     logger.warn('Pre-solve captcha failed, will solve on-demand', { error: err.message });
     return null; // null signals fallback to on-demand
   }));
@@ -1675,7 +1676,7 @@ bot.on('text', async (ctx) => {
           }
           if (!captchaToken) {
             // Fallback: solve on-demand (pre-solve failed or this is a retry)
-            const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/');
+            const result = await solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS);
             captchaToken = result.data;
           }
           timer.endStep('captchaSolve');
