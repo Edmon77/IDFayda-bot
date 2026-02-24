@@ -1658,13 +1658,13 @@ bot.on('text', async (ctx) => {
 
       activeDownloads.set(userId, true);
 
-      // Immediately ask for OTP — run captcha+verify in background while user types
+      // Show "Sending OTP..." immediately — update when verify actually completes
       ctx.session.id = validation.value;
       ctx.session.verificationMethod = validation.type || 'FCN';
       ctx.session.step = 'OTP';
-      await ctx.reply("✅ ID received. Enter the OTP sent to your phone:\n_Send /cancel to return to menu._", { parse_mode: 'Markdown' });
+      const otpPromptMsg = await ctx.reply("⏳ Sending OTP to your phone...");
 
-      // Launch captcha + verify in background (runs while user types OTP)
+      // Launch captcha + verify in background (runs while user waits for SMS)
       const timer = new DownloadTimer(userId);
       const verifyPromise = (async () => {
         let lastErr;
@@ -1718,6 +1718,25 @@ bot.on('text', async (ctx) => {
         timer.report('id_verification_failed');
         return { success: false, error: rawMsg, timer };
       })();
+
+      // Update message when verify completes (non-blocking — runs in background)
+      verifyPromise.then(result => {
+        if (result.success) {
+          ctx.telegram.editMessageText(ctx.chat.id, otpPromptMsg.message_id, null,
+            "✅ OTP sent! Enter the code:\n_Send /cancel to return to menu._",
+            { parse_mode: 'Markdown' }
+          ).catch(() => { });
+        } else {
+          const rawMsg = result.error || '';
+          const userMsg = /too many|limit|wait/i.test(rawMsg)
+            ? '⏳ Too many attempts. Please wait a few minutes before trying again.'
+            : /invalid/i.test(rawMsg) ? '❌ Invalid ID. Please check and try again.'
+              : '❌ Verification failed. Please try /start again.';
+          ctx.telegram.editMessageText(ctx.chat.id, otpPromptMsg.message_id, null, userMsg).catch(() => { });
+          activeDownloads.delete(userId);
+          ctx.session = ctx.session || {}; ctx.session.step = null;
+        }
+      }).catch(() => { });
 
       pendingVerifications.set(userId, verifyPromise);
       return;
