@@ -1358,22 +1358,44 @@ bot.on('text', async (ctx) => {
     const text = ctx.message.text.trim();
     const state = ctx.session;
 
-    // --- Reply Keyboard button routing (auto-cancels active flows) ---
-    switch (text) {
-      case BTN.START:
-        ctx.session = ctx.session || {}; ctx.session.step = null;
-        return handleDownload(ctx, false);
-      case BTN.MANAGE:
-        ctx.session = ctx.session || {}; ctx.session.step = null;
+    // --- Reply Keyboard button routing (context-aware download lock) ---
+    const userId = ctx.from.id.toString();
+    const hasActiveDownload = activeDownloads.has(userId);
+
+    if (text === BTN.MANAGE || text === BTN.DASHBOARD) {
+      // Non-download menus: auto-cancel any active download, then show menu
+      if (hasActiveDownload) {
+        activeDownloads.delete(userId);
+        ctx.session = ctx.session || {};
+        ctx.session.step = null;
+        await ctx.reply('❌ Download Cancelled.');
+      }
+      ctx.session = ctx.session || {};
+      ctx.session.step = null;
+      if (text === BTN.MANAGE) {
         return handleManageUsers(ctx, false);
-      case BTN.DASHBOARD:
-        ctx.session = ctx.session || {}; ctx.session.step = null;
+      } else {
         try {
           return await handleDashboard(ctx, false);
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
           return ctx.reply('❌ Failed to load dashboard.');
         }
+      }
+    }
+
+    if (text === BTN.START) {
+      if (hasActiveDownload) {
+        // During OTP step: remind user to enter OTP
+        if (state && state.step === 'OTP') {
+          return ctx.reply('⏳ You already have a download in progress.\nEnter the OTP sent to your phone:\n_Send /cancel to return to menu._', { parse_mode: 'Markdown' });
+        }
+        // During other download steps (captcha/verification): just block
+        return ctx.reply('⏳ You already have a download in progress. Please wait.\n_Send /cancel to return to menu._', { parse_mode: 'Markdown' });
+      }
+      ctx.session = ctx.session || {};
+      ctx.session.step = null;
+      return handleDownload(ctx, false);
     }
 
     // --- Flow step processing ---
