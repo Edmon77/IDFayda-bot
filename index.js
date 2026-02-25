@@ -599,7 +599,7 @@ async function handleDownload(ctx, isInline) {
     return null; // null signals fallback to on-demand
   }));
 
-  const text = "🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):";
+  const text = "🆔 Please enter your FCN/FIN:";
   if (isInline) {
     await ctx.editMessageText(text, { parse_mode: 'Markdown' });
   } else {
@@ -1735,7 +1735,7 @@ bot.on('text', async (ctx) => {
 
         if (result.success) {
           ctx.telegram.editMessageText(ctx.chat.id, otpPromptMsg.message_id, null,
-            "✅ OTP sent! Enter the code:\n_Send /cancel to return to menu._",
+            "✅ OTP sent! Enter the code:",
             { parse_mode: 'Markdown' }
           ).catch(() => { });
         } else {
@@ -1866,7 +1866,7 @@ bot.on('text', async (ctx) => {
                   return null;
                 }));
 
-                await ctx.reply("🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):", { parse_mode: 'Markdown' });
+                await ctx.reply("🆔 Please enter your FCN/FIN:", { parse_mode: 'Markdown' });
                 return;
               }
             }
