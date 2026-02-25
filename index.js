@@ -558,6 +558,8 @@ bot.start(async (ctx) => {
 async function handleCancel(ctx) {
   ctx.session = ctx.session || {};
   ctx.session.step = null;
+  ctx.session.processingOTP = false;
+  ctx.session.otpRetryCount = 0;
   const userId = ctx.from.id.toString();
   // Release download lock and clean up pending background tasks
   activeDownloads.delete(userId);
@@ -1401,16 +1403,16 @@ bot.on('text', async (ctx) => {
     }
 
     if (text === BTN.START) {
+      // Silently cancel any active download and start fresh (no "Download Cancelled" message)
       if (hasActiveDownload) {
-        // During OTP step: remind user to enter OTP
-        if (state && state.step === 'OTP') {
-          return ctx.reply('⏳ You already have a download in progress.\nEnter the OTP sent to your phone:\n_Send /cancel to return to menu._', { parse_mode: 'Markdown' });
-        }
-        // During other download steps (captcha/verification): just block
-        return ctx.reply('⏳ You already have a download in progress. Please wait.\n_Send /cancel to return to menu._', { parse_mode: 'Markdown' });
+        activeDownloads.delete(userId);
+        pendingCaptchas.delete(userId);
+        pendingVerifications.delete(userId);
       }
       ctx.session = ctx.session || {};
       ctx.session.step = null;
+      ctx.session.processingOTP = false;
+      ctx.session.otpRetryCount = 0;
       return handleDownload(ctx, false);
     }
 
@@ -1757,7 +1759,7 @@ bot.on('text', async (ctx) => {
         return ctx.reply(`❌ ${validation.error}. Please enter a valid OTP.`);
       }
 
-      const status = await ctx.reply("⏳ Verifying...");
+      const statusMsg = await ctx.reply("⏳ Verifying...");
 
       // Await background verification (captcha + verify running since ID step)
       let verifyResult;
@@ -1796,40 +1798,88 @@ bot.on('text', async (ctx) => {
         timer.setPhase('userWaitMs', otpPhaseStart - idPhaseEnd);
       }
 
-      await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Verifying OTP...");
+      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ Verifying OTP...");
       const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
-      let otpResponse;
-      let otpAttempts = 2;
-      timer.startStep('otpValidation');
-      for (let attempt = 1; attempt <= otpAttempts; attempt++) {
-        try {
-          otpResponse = await fayda.api.post('/validateOtp', {
-            otp: validation.value,
-            uniqueId: state.id,
-            verificationMethod: state.verificationMethod || 'FCN'
-          }, {
-            headers: authHeader,
-            timeout: 35000
-          });
-          break;
-        } catch (e) {
-          const isRetryable = !e.response || (e.response.status >= 500 && e.response.status < 600) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
-          if (attempt === otpAttempts || !isRetryable) throw e;
-          logger.warn(`validateOtp attempt ${attempt} failed, retrying`, { error: e.message });
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      }
-      timer.endStep('otpValidation');
-
+      // Everything from OTP validation onward is inside try-catch-finally
+      // so that processingOTP is ALWAYS reset, even if validateOtp throws
       try {
+        let otpResponse;
+        let otpAttempts = 2;
+        timer.startStep('otpValidation');
+        for (let attempt = 1; attempt <= otpAttempts; attempt++) {
+          try {
+            otpResponse = await fayda.api.post('/validateOtp', {
+              otp: validation.value,
+              uniqueId: state.id,
+              verificationMethod: state.verificationMethod || 'FCN'
+            }, {
+              headers: authHeader,
+              timeout: 35000
+            });
+            break;
+          } catch (e) {
+            // Check if this is an "invalid otp" error (user typed wrong OTP)
+            const isInvalidOtp = e.response?.status === 500 && /invalid otp/i.test(e.response?.data?.message || '');
+
+            if (isInvalidOtp) {
+              timer.endStep('otpValidation');
+              const retryCount = state.otpRetryCount || 0;
+
+              if (retryCount < 1) {
+                // First wrong OTP — allow one retry
+                state.otpRetryCount = retryCount + 1;
+                state.processingOTP = false;
+                logger.warn('Invalid OTP entered, allowing retry', { userId, attempt: retryCount + 1 });
+                await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+                  "❌ Invalid OTP. You have 1 more attempt.\nPlease enter the correct OTP:"
+                ).catch(() => { });
+                // Keep session.step = 'OTP' and activeDownloads lock — user stays in OTP step
+                return;
+              } else {
+                // Second wrong OTP — cancel and restart
+                logger.warn('Invalid OTP on final attempt, cancelling download', { userId });
+                state.processingOTP = false;
+                state.otpRetryCount = 0;
+                activeDownloads.delete(userId);
+                pendingCaptchas.delete(userId);
+                pendingVerifications.delete(userId);
+                ctx.session = ctx.session || {};
+                ctx.session.step = 'ID';
+                await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
+                  "❌ Incorrect OTP. Download cancelled."
+                ).catch(() => { });
+
+                // Pre-solve captcha for the restart
+                pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
+                  logger.warn('Pre-solve captcha failed, will solve on-demand', { error: err.message });
+                  return null;
+                }));
+
+                await ctx.reply("🚀 Fayda ID Downloader\nPlease enter your **FCN/FIN number** (16 or 12 digits):", { parse_mode: 'Markdown' });
+                return;
+              }
+            }
+
+            // For non-invalid-otp errors: retry if retryable server error
+            const isRetryable = !e.response || (e.response.status >= 500 && e.response.status < 600) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
+            if (attempt === otpAttempts || !isRetryable) throw e;
+            logger.warn(`validateOtp attempt ${attempt} failed, retrying`, { error: e.message });
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
+        timer.endStep('otpValidation');
+
         const { signature, uin, fullName } = otpResponse.data;
         if (!signature || !uin) {
           throw new Error('Missing signature or uin in OTP response');
         }
 
+        // Reset OTP retry counter on success
+        state.otpRetryCount = 0;
+
         // Non-blocking status update — PDF fetch starts immediately in parallel
-        ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ OTP verified! Fetching your ID...").catch(() => { });
+        ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ OTP verified! Fetching your ID...").catch(() => { });
 
         // Under heavy load (PREFER_QUEUE_PDF=true) skip sync and always queue for controlled concurrency
         let pdfSent = false;
@@ -1888,7 +1938,7 @@ bot.on('text', async (ctx) => {
               if (attempt < PDF_SYNC_ATTEMPTS) {
                 logger.warn(`Sync PDF attempt ${attempt} failed, retrying`, { error: syncErr.message });
                 // Show user one clean message — no attempt counts
-                await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Please wait… processing your document.").catch(() => { });
+                await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ Please wait… processing your document.").catch(() => { });
                 await new Promise(r => setTimeout(r, PDF_SYNC_RETRY_DELAY_MS));
               }
             }
@@ -1916,7 +1966,7 @@ bot.on('text', async (ctx) => {
             logger.info(`PDF job ${job.id} queued (sync failed) for user ${ctx.from.id.toString()}`);
           } catch (queueError) {
             logger.error('Queue add failed, trying sync once more:', queueError);
-            await ctx.telegram.editMessageText(ctx.chat.id, status.message_id, null, "⏳ Processing PDF directly...");
+            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ Processing PDF directly...");
             try {
               timer.startStep('pdfFetch');
               const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
@@ -1990,7 +2040,8 @@ bot.on('text', async (ctx) => {
         ctx.session = ctx.session || {}; ctx.session.step = null;
         activeDownloads.delete(userId);
       } finally {
-        // Always clear processing flag
+        // Always clear processing flag — this now covers ALL code paths
+        // including the validateOtp loop that previously escaped this block
         if (state) {
           state.processingOTP = false;
         }
@@ -2004,7 +2055,14 @@ bot.on('text', async (ctx) => {
       status: error.response?.status,
       response: safeResponseForLog(error.response?.data)
     });
-    activeDownloads.delete(ctx.from?.id?.toString());
+    // Safety net: clean up ALL state if an error escapes inner catches
+    const uid = ctx.from?.id?.toString();
+    if (uid) activeDownloads.delete(uid);
+    if (ctx.session) {
+      ctx.session.step = null;
+      ctx.session.processingOTP = false;
+      ctx.session.otpRetryCount = 0;
+    }
     ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
   }
 });
