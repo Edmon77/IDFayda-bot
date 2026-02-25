@@ -159,7 +159,8 @@ app.get('/login', (req, res) => {
   if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
     return res.status(503).send('Admin dashboard not configured. Set ADMIN_USER and ADMIN_PASS in environment.');
   }
-  res.render('login', { error: req.query.error });
+  const errorMap = { invalid: 'Invalid credentials' };
+  res.render('login', { error: errorMap[req.query.error] });
 });
 app.post('/login', loginLimiter, (req, res) => {
   if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
@@ -1384,8 +1385,12 @@ bot.on('text', async (ctx) => {
       // Non-download menus: auto-cancel any active download, then show menu
       if (hasActiveDownload) {
         activeDownloads.delete(userId);
+        pendingCaptchas.delete(userId);
+        pendingVerifications.delete(userId);
         ctx.session = ctx.session || {};
         ctx.session.step = null;
+        ctx.session.processingOTP = false;
+        ctx.session.otpRetryCount = 0;
         await ctx.reply('❌ Download Cancelled.');
       }
       ctx.session = ctx.session || {};
@@ -1723,6 +1728,11 @@ bot.on('text', async (ctx) => {
 
       // Update message when verify completes (non-blocking — runs in background)
       verifyPromise.then(result => {
+        // C1 Fix: If user restarted or cleared session, this promise is no longer the active one
+        if (pendingVerifications.get(userId) !== verifyPromise) {
+          return; // Silent abort — prevents ghost state updates
+        }
+
         if (result.success) {
           ctx.telegram.editMessageText(ctx.chat.id, otpPromptMsg.message_id, null,
             "✅ OTP sent! Enter the code:\n_Send /cancel to return to menu._",
@@ -2055,9 +2065,13 @@ bot.on('text', async (ctx) => {
       status: error.response?.status,
       response: safeResponseForLog(error.response?.data)
     });
-    // Safety net: clean up ALL state if an error escapes inner catches
+    // Safety net: clean up ALL state if an error escapes inner catches (C3)
     const uid = ctx.from?.id?.toString();
-    if (uid) activeDownloads.delete(uid);
+    if (uid) {
+      activeDownloads.delete(uid);
+      pendingCaptchas.delete(uid);
+      pendingVerifications.delete(uid);
+    }
     if (ctx.session) {
       ctx.session.step = null;
       ctx.session.processingOTP = false;
@@ -2095,7 +2109,21 @@ async function startServer() {
     await connectDB();
     await migrateRoles();
 
+    // C2/C3 Fix: Periodic cleanup for in-memory Maps to prevent memory leaks
+    setInterval(() => {
+      const now = Date.now();
+      let cooldownCleared = 0;
+      for (const [userId, timestamp] of verificationCooldown.entries()) {
+        if (now - timestamp > VERIFICATION_COOLDOWN_MS) {
+          verificationCooldown.delete(userId);
+          cooldownCleared++;
+        }
+      }
+      if (cooldownCleared > 0) logger.info(`Cleaned up ${cooldownCleared} expired verification cooldowns`);
 
+      // We don't sweep activeDownloads/pendingCaptchas/pendingVerifications by time directly
+      // because they might be legitimately long-running or properly cleaned by error catch blocks now.
+    }, 15 * 60 * 1000); // Check every 15 minutes
     // Set webhook
     const webhookPath = '/webhook';
     // Ensure WEBHOOK_DOMAIN has https:// prefix

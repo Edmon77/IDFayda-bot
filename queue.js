@@ -143,10 +143,5 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
   }
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received, closing queue...');
-  await pdfQueue.close();
-});
 
 module.exports = pdfQueue;
