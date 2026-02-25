@@ -16,7 +16,7 @@
 const crypto = require('crypto');
 const logger = require('./logger');
 
-const SLOW_THRESHOLD_MS = 30000;
+const SLOW_THRESHOLD_MS = 60000;
 
 class DownloadTimer {
     /**

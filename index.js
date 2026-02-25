@@ -1776,6 +1776,14 @@ bot.on('text', async (ctx) => {
       if (pendingVerifications.has(userId)) {
         verifyResult = await pendingVerifications.get(userId);
         pendingVerifications.delete(userId);
+      } else if (state.tempJwt && state._timer) {
+        // Recovery logic for OTP retries (pendingVerifications is clear, but state is intact)
+        const { DownloadTimer } = require('./utils/timer');
+        verifyResult = {
+          success: true,
+          token: state.tempJwt,
+          timer: DownloadTimer.fromSession(state._timer, userId)
+        };
       } else {
         // Safety fallback — should not happen in normal flow
         logger.error('No pending verification found for user', { userId });
@@ -2092,6 +2100,13 @@ async function gracefulShutdown(signal) {
 
     await disconnectDB();
     await pdfQueue.close();
+    // Flush and quit Redis client gracefully
+    try {
+      const { redisClient } = require('./utils/rateLimiter');
+      await redisClient.quit();
+    } catch (e) {
+      logger.error('Error closing Redis during shutdown:', e.message);
+    }
     process.exit(0);
   } catch (error) {
     logger.error('Error during shutdown:', { message: error.message, stack: error.stack });
