@@ -328,6 +328,7 @@
                             </div>
 
                             <form id="announcementForm" method="POST" action="/announcements/send">
+                                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                                 <div class="form-group">
                                     <label for="message">Your Message (Markdown Supported)</label>
                                     <textarea id="message" name="message"
