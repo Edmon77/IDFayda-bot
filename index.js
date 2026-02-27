@@ -23,7 +23,9 @@ const fayda = require('./utils/faydaClient');
 const { Markup } = require('telegraf');
 
 const bot = require('./bot');
+const broadcastQueue = require('./utils/broadcastQueue');
 const User = require('./models/User');
+const Announcement = require('./models/Announcement');
 // auth middleware removed — authorization is handled inline in bot.use()
 const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
@@ -241,8 +243,10 @@ app.get('/pending', requireWebAuth, asyncHandler(async (req, res) => {
 
 app.get('/announcements', requireWebAuth, asyncHandler(async (req, res) => {
   const userCount = await User.countDocuments({ role: { $in: ['admin', 'user'] } });
+  const history = await Announcement.find({ status: { $ne: 'deleted' } }).sort({ sentAt: -1 }).limit(20).lean();
   res.render('announcements', {
     userCount,
+    history,
     success: req.query.success,
     error: req.query.error
   });
@@ -254,24 +258,63 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
     return res.redirect('/announcements?error=Message cannot be empty');
   }
 
-  // Fetch all users to broadcast to (including admins and subusers)
+  // Fetch all users to broadcast to
   const users = await User.find({ role: { $in: ['admin', 'user'] } }).select('telegramId').lean();
 
   if (users.length === 0) {
     return res.redirect('/announcements?error=No active users found to broadcast to');
   }
 
+  // Create official history record
+  const announcement = await Announcement.create({
+    message: message.trim(),
+    recipientsCount: users.length,
+    status: 'pending'
+  });
+
   // Queue up the broadcast jobs
   for (const user of users) {
     await broadcastQueue.add({
+      type: 'send',
       telegramId: user.telegramId,
       message: message.trim(),
+      announcementId: announcement._id,
       parseMode: 'Markdown'
     });
   }
 
+  announcement.status = 'completed';
+  await announcement.save();
+
   logger.info(`Announcement broadcast enqueued for ${users.length} users by web admin.`);
   res.redirect(`/announcements?success=Broadcast for ${users.length} users has been enqueued!`);
+}));
+
+app.post('/announcements/clear/:id', requireWebAuth, asyncHandler(async (req, res) => {
+  // Just mark as deleted in DB so it doesn't show in history
+  await Announcement.findByIdAndUpdate(req.params.id, { status: 'deleted' });
+  res.redirect('/announcements?success=Announcement cleared from history.');
+}));
+
+app.post('/announcements/delete-everyone/:id', requireWebAuth, asyncHandler(async (req, res) => {
+  const announcement = await Announcement.findById(req.params.id);
+  if (!announcement) return res.redirect('/announcements?error=Announcement not found');
+
+  // Queue up deletion jobs for every message we tracked
+  for (const msg of announcement.sentMessages) {
+    await broadcastQueue.add({
+      type: 'delete',
+      telegramId: msg.chatId,
+      messageId: msg.messageId
+    });
+  }
+
+  announcement.status = 'deleted';
+  announcement.deletedAt = new Date();
+  await announcement.save();
+
+  logger.info(`Remote deletion enqueued for announcement ${req.params.id} (${announcement.sentMessages.length} messages).`);
+  res.redirect(`/announcements?success=Deletion request enqueued for ${announcement.sentMessages.length} recipients.`);
 }));
 
 app.post('/pending/remove/:id', requireWebAuth, asyncHandler(async (req, res) => {

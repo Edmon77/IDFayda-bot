@@ -264,6 +264,82 @@
             display: block;
         }
 
+        .btn-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        /* History List */
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .history-card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            transition: border-color 0.2s;
+        }
+
+        .history-card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .history-date {
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+
+        .history-msg {
+            font-size: 0.9rem;
+            color: var(--text);
+            white-space: pre-wrap;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .history-msg.expanded {
+            -webkit-line-clamp: unset;
+        }
+
+        .history-stats {
+            font-size: 0.75rem;
+            color: var(--accent-hover);
+            font-weight: 500;
+        }
+
+        .history-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.75rem;
+            font-size: 0.75rem;
+            border-radius: 6px;
+        }
+
         @media (max-width: 600px) {
             .presets {
                 grid-template-columns: 1fr;
@@ -271,6 +347,11 @@
 
             .card {
                 padding: 1.25rem;
+            }
+
+            .history-header {
+                flex-direction: column;
+                gap: 0.25rem;
             }
         }
     </style>
@@ -341,7 +422,57 @@
                                         Users</button>
                                 </div>
                             </form>
-                        </div>
+                            <div class="card">
+                                <div class="title-group">
+                                    <h2>📜 Send History</h2>
+                                    <p>View and manage previously sent announcements. You can clear them from history or
+                                        delete them from all user chats.</p>
+                                </div>
+
+                                <% if (history && history.length> 0) { %>
+                                    <div class="history-list">
+                                        <% history.forEach(item=> { %>
+                                            <div class="history-card" id="card-<%= item._id %>">
+                                                <div class="history-header">
+                                                    <div class="history-date">📅 <%= new
+                                                            Date(item.sentAt).toLocaleString() %>
+                                                    </div>
+                                                    <div class="history-stats">👥 <%= item.recipientsCount %> recipients
+                                                    </div>
+                                                </div>
+                                                <div class="history-msg" id="msg-<%= item._id %>">
+                                                    <%= item.message %>
+                                                </div>
+                                                <div class="history-actions">
+                                                    <button class="btn btn-ghost btn-sm"
+                                                        onclick="toggleExpand('<%= item._id %>')">👁️ View Full</button>
+
+                                                    <form method="POST" action="/announcements/clear/<%= item._id %>"
+                                                        style="display: inline;"
+                                                        onsubmit="return confirm('Clear this record from history? Users will still have the message.')">
+                                                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                                                        <button type="submit" class="btn btn-ghost btn-sm">🗑️ Clear
+                                                            History</button>
+                                                    </form>
+
+                                                    <form method="POST"
+                                                        action="/announcements/delete-everyone/<%= item._id %>"
+                                                        style="display: inline;"
+                                                        onsubmit="return confirm('⚠️ DELETE FOR EVERYONE?\n\nThis will attempt to remove the message from ALL recipients\' Telegram chats. This action is permanent.')">
+                                                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                                                        <button type="submit" class="btn btn-danger btn-sm">🛑 Delete
+                                                            for Everyone</button>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                            <% }) %>
+                                    </div>
+                                    <% } else { %>
+                                        <p
+                                            style="font-size: 0.9rem; color: var(--muted); text-align: center; padding: 2rem;">
+                                            No announcement history found.</p>
+                                        <% } %>
+                            </div>
     </main>
 
     <div class="modal-overlay" id="confirmModal">
@@ -387,6 +518,11 @@
 
         function submitForm() {
             document.getElementById('announcementForm').submit();
+        }
+
+        function toggleExpand(id) {
+            const msg = document.getElementById('msg-' + id);
+            msg.classList.toggle('expanded');
         }
     </script>
 </body>

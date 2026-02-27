@@ -20,34 +20,49 @@ const broadcastQueue = new Queue('broadcast-messages', process.env.REDIS_URL, {
     }
 });
 
-// Telegram rate limits: ~30 messages per second globally.
-// We'll be conservative and use a concurrency and rate limiter in Bull.
-// This worker will process jobs one at a time with a delay.
+const Announcement = require('../models/Announcement');
+
+// Broadcast queue for mass messaging and remote deletions
+// This worker will process jobs one at a time with a strict delay.
 broadcastQueue.process(1, async (job) => {
-    const { telegramId, message, parseMode = 'Markdown' } = job.data;
+    const { type = 'send', telegramId, message, announcementId, messageId: targetMessageId, parseMode = 'Markdown' } = job.data;
 
     try {
-        await bot.telegram.sendMessage(telegramId, message, { parse_mode: parseMode });
-        // Artificial delay to respect Telegram rate limits (approx 20-30 msgs/sec for simple text)
-        // Using 100ms between attempts for safety (10 msgs/sec)
+        if (type === 'send') {
+            const sentMsg = await bot.telegram.sendMessage(telegramId, message, { parse_mode: parseMode });
+
+            // Update the Announcement record with this messageId for later deletion
+            if (announcementId && sentMsg.message_id) {
+                await Announcement.findByIdAndUpdate(announcementId, {
+                    $push: { sentMessages: { chatId: telegramId, messageId: sentMsg.message_id } }
+                });
+            }
+        } else if (type === 'delete') {
+            // Remote deletion logic
+            if (targetMessageId) {
+                await bot.telegram.deleteMessage(telegramId, targetMessageId).catch(() => {
+                    // Ignore errors like "message not found" or "too old to delete"
+                });
+            }
+        }
+
+        // Artificial delay to respect Telegram rate limits
         await new Promise(r => setTimeout(r, 100));
         return { success: true };
     } catch (err) {
         const isBlocked = err.message && (err.message.includes('blocked') || err.message.includes('deactivated') || err.message.includes('chat not found'));
 
         if (isBlocked) {
-            logger.warn(`Skipping broadcast to user ${telegramId}: Bot was blocked or account deleted.`);
             return { success: false, reason: 'blocked' };
         }
 
         if (err.description && err.description.includes('retry after')) {
             const waitTime = parseInt(err.parameters?.retry_after, 10) || 5;
-            logger.error(`Telegram Rate Limit hit during broadcast. Retrying in ${waitTime}s...`);
-            // Throwing error will trigger Bull's backoff and retry
+            logger.error(`Telegram Rate Limit hit during broadcast ${type}. Retrying after ${waitTime}s...`);
             throw err;
         }
 
-        logger.error(`Broadcast failed for user ${telegramId}:`, err.message);
+        logger.error(`Broadcast ${type} failed for user ${telegramId}:`, err.message);
         throw err;
     }
 });
