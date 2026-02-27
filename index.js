@@ -2038,12 +2038,19 @@ bot.on('text', async (ctx) => {
             timer.endStep('captchaSolve');
             timer.endStep('idVerification');
             lastErr = e;
-            const errMsg = e.response?.data?.message || e.message || 'Verification failed';
-            logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed`, { error: errMsg });
+            const status = e.response?.status;
+            const errData = e.response?.data;
+            const errMsg = errData?.message || e.message || 'Verification failed';
 
-            const status4xx = e.response?.status >= 400 && e.response?.status < 500;
-            if (status4xx) {
-              logger.warn('ID verification returned 4xx, aborting retries', { status: e.response?.status });
+            logger.warn(`ID verification attempt ${attempt}/${CAPTCHA_VERIFY_ATTEMPTS} failed`, {
+              userId,
+              status,
+              error: errMsg,
+              data: errData
+            });
+
+            if (status >= 400 && status < 500) {
+              logger.warn('ID verification returned 4xx, aborting retries', { userId, status });
               break;
             }
           }
@@ -2209,7 +2216,19 @@ bot.on('text', async (ctx) => {
             }
 
             // For non-invalid-otp errors: retry if retryable server error
-            const isRetryable = !e.response || (e.response.status >= 500 && e.response.status < 600) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
+            const status = e.response?.status;
+            const errData = e.response?.data;
+            const isRetryable = !e.response || (status >= 500 && status < 600) || ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
+
+            logger.error(`OTP validation attempt ${attempt}/${otpAttempts} failed (non-invalid-otp)`, {
+              userId,
+              status,
+              error: errData?.message || e.message || 'OTP validation fail',
+              data: errData,
+              code: e.code,
+              isRetryable
+            });
+
             if (attempt === otpAttempts || !isRetryable) throw e;
             logger.warn(`validateOtp attempt ${attempt} failed, retrying`, { error: e.message });
             await new Promise(r => setTimeout(r, 2000));
