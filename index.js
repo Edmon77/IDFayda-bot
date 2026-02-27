@@ -571,6 +571,16 @@ bot.start(async (ctx) => {
     ctx.session = ctx.session || {};
     ctx.session.step = null;
     const user = ctx.state.user;
+
+    // Aggressive pre-solve: Start solving CAPTCHA immediately when user opens the bot
+    const userId = ctx.from.id.toString();
+    if (!pendingCaptchas.has(userId) && !activeDownloads.has(userId)) {
+      pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
+        logger.warn('Pre-solve captcha on /start failed', { error: err.message });
+        return null;
+      }));
+    }
+
     const title = getPanelTitle(user.role);
     await ctx.reply(title, {
       parse_mode: 'Markdown',
@@ -620,11 +630,13 @@ async function handleDownload(ctx, isInline) {
   }
   ctx.session.step = 'ID';
 
-  // Lazy pre-solve: start captcha solve NOW while user types their ID (5-15s of free overlap)
-  pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
-    logger.warn('Pre-solve captcha failed, will solve on-demand', { error: err.message });
-    return null; // null signals fallback to on-demand
-  }));
+  // If a captcha is not already solving (e.g. they didn't come through /start or BTN.START), start it now
+  if (!pendingCaptchas.has(userId)) {
+    pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
+      logger.warn('Pre-solve captcha failed, will solve on-demand', { error: err.message });
+      return null;
+    }));
+  }
 
   const text = "🆔 Please enter your FCN/FIN:";
   if (isInline) {
@@ -1493,6 +1505,15 @@ bot.on('text', async (ctx) => {
       ctx.session.step = null;
       ctx.session.processingOTP = false;
       ctx.session.otpRetryCount = 0;
+
+      // Aggressive pre-solve: user tapped the main "⬇️ Download ID" or equivalent menu button
+      if (!pendingCaptchas.has(userId)) {
+        pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
+          logger.warn('Pre-solve captcha on BTN.START failed', { error: err.message });
+          return null;
+        }));
+      }
+
       return handleDownload(ctx, false);
     }
 

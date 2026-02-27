@@ -51,8 +51,8 @@ class SolveCaptcha {
             // logger.info(`Submitted reCAPTCHA to SolveCaptcha, ID: ${captchaId}`);
 
             // 2. Poll for the result
-            // "Make a 15-20 seconds timeout then submit a HTTP GET request to our API URL"
-            await new Promise(resolve => setTimeout(resolve, 15000));
+            // Initial timeout reduced to 10 seconds for speed
+            await new Promise(resolve => setTimeout(resolve, 10000));
 
             const maxAttempts = 24; // ~2 minutes maximum polling
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -66,6 +66,10 @@ class SolveCaptcha {
                 } else if (outData.request === 'CAPCHA_NOT_READY') {
                     // Wait 5 seconds and poll again
                     await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
+                } else if (outData.request === 'ERROR_TOO_MUCH_REQUESTS') {
+                    // Hit polling limit - back off safely instead of failing
+                    logger.warn(`SolveCaptcha rate limited (ERROR_TOO_MUCH_REQUESTS). Backing off for ID: ${captchaId}`);
+                    await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs + 2000));
                 } else {
                     // Some other error
                     throw new Error(`SolveCaptcha poll failed: ${outData.request}`);
