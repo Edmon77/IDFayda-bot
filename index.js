@@ -252,6 +252,23 @@ app.get('/announcements', requireWebAuth, asyncHandler(async (req, res) => {
   });
 }));
 
+app.get('/announcements/status/:id', requireWebAuth, asyncHandler(async (req, res) => {
+  const announcement = await Announcement.findById(req.params.id).select('sentCount failedCount recipientsCount status').lean();
+  if (!announcement) return res.status(404).json({ error: 'Not found' });
+
+  const processed = announcement.sentCount + announcement.failedCount;
+  const percent = announcement.recipientsCount > 0 ? Math.round((processed / announcement.recipientsCount) * 100) : 0;
+
+  res.json({
+    percent,
+    sent: announcement.sentCount,
+    failed: announcement.failedCount,
+    total: announcement.recipientsCount,
+    status: announcement.status
+  });
+}));
+
+
 app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) => {
   const { message } = req.body;
   if (!message || message.trim().length === 0) {

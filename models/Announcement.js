@@ -11,6 +11,8 @@ const announcementSchema = new mongoose.Schema({
         chatId: { type: String },
         messageId: { type: Number }
     }],
+    sentCount: { type: Number, default: 0 },
+    failedCount: { type: Number, default: 0 },
     // For 'delete for everyone' progress tracking
     deletedAt: { type: Date }
 });

@@ -34,7 +34,8 @@ broadcastQueue.process(1, async (job) => {
             // Update the Announcement record with this messageId for later deletion
             if (announcementId && sentMsg.message_id) {
                 await Announcement.findByIdAndUpdate(announcementId, {
-                    $push: { sentMessages: { chatId: telegramId, messageId: sentMsg.message_id } }
+                    $push: { sentMessages: { chatId: telegramId, messageId: sentMsg.message_id } },
+                    $inc: { sentCount: 1 }
                 });
             }
         } else if (type === 'delete') {
@@ -47,12 +48,16 @@ broadcastQueue.process(1, async (job) => {
         }
 
         // Artificial delay to respect Telegram rate limits
-        await new Promise(r => setTimeout(r, 100));
+        // Reducing to 50ms for approx 20 messages per second (safe and faster)
+        await new Promise(r => setTimeout(r, 50));
         return { success: true };
     } catch (err) {
         const isBlocked = err.message && (err.message.includes('blocked') || err.message.includes('deactivated') || err.message.includes('chat not found'));
 
         if (isBlocked) {
+            if (announcementId) {
+                await Announcement.findByIdAndUpdate(announcementId, { $inc: { failedCount: 1 } });
+            }
             return { success: false, reason: 'blocked' };
         }
 

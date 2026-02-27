@@ -334,6 +334,35 @@
             flex-wrap: wrap;
         }
 
+        /* Progress Bar */
+        .progress-wrapper {
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-bar-bg {
+            background: var(--surface2);
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar-fill {
+            background: var(--accent);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.7rem;
+            color: var(--muted);
+            margin-top: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+
         .btn-sm {
             padding: 0.4rem 0.75rem;
             font-size: 0.75rem;
@@ -523,6 +552,51 @@
         function toggleExpand(id) {
             const msg = document.getElementById('msg-' + id);
             msg.classList.toggle('expanded');
+        }
+
+        // Real-time polling for active announcements
+        const activePolls = new Set();
+        <% if (history) {
+            history.forEach(item => {
+                const processed = (item.sentCount || 0) + (item.failedCount || 0);
+                if (processed < item.recipientsCount && item.status !== 'deleted') { %>
+                    activePolls.add('<%= item._id %>');
+        <% }
+            })
+        } %>
+
+            async function pollStatus(id) {
+                try {
+                    const res = await fetch('/announcements/status/' + id);
+                    if (!res.ok) throw new Error();
+                    const data = await res.json();
+
+                    const fill = document.getElementById('fill-' + id);
+                    const label = document.getElementById('label-' + id);
+                    const statusText = document.getElementById('status-text-' + id);
+
+                    if (fill) fill.style.width = data.percent + '%';
+                    if (label) label.innerText = `${data.percent}% Complete (${data.sent + data.failed}/${data.total})`;
+
+                    if (data.percent >= 100) {
+                        if (statusText) statusText.innerText = '✅ Finished';
+                        activePolls.delete(id);
+                    } else {
+                        if (statusText) statusText.innerText = '🚀 Sending...';
+                    }
+                } catch (e) {
+                    console.error('Polling failed for ' + id);
+                }
+            }
+
+        if (activePolls.size > 0) {
+            const interval = setInterval(() => {
+                if (activePolls.size === 0) {
+                    clearInterval(interval);
+                    return;
+                }
+                activePolls.forEach(id => pollStatus(id));
+            }, 3000); // Poll every 3 seconds
         }
     </script>
 </body>
