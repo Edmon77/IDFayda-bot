@@ -292,9 +292,8 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
       let count = 0;
       for (const user of users) {
         count++;
-        if (count % 10 === 0 || count === users.length) {
-          logger.info(`Enqueueing job ${count}/${users.length}...`);
-        }
+        // Log every single job for debugging purposes until we resolve the stall
+        logger.info(`Enqueueing job ${count}/${users.length} for user ${user.telegramId}...`);
         await broadcastQueue.add({
           type: 'send',
           telegramId: user.telegramId,

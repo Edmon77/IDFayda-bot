@@ -2,12 +2,31 @@ const Queue = require('bull');
 const bot = require('../bot');
 const logger = require('./logger');
 
+const IORedis = require('ioredis');
+
+// Shared Redis options for stability
+const redisOptions = {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy: (times) => Math.min(times * 100, 3000),
+    reconnectOnError: (err) => {
+        const targetError = 'READONLY';
+        if (err.message.includes(targetError)) return true;
+        return false;
+    }
+};
+
 // Broadcast queue for mass messaging with strict rate limiting
-const broadcastQueue = new Queue('broadcast-messages', process.env.REDIS_URL, {
-    redis: {
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-        retryStrategy: (times) => Math.min(times * 100, 3000)
+const broadcastQueue = new Queue('broadcast-messages', {
+    createClient: (type) => {
+        switch (type) {
+            case 'client':
+            case 'subscriber':
+            case 'bclient':
+                return new IORedis(process.env.REDIS_URL, redisOptions);
+            default:
+                return new IORedis(process.env.REDIS_URL, redisOptions);
+        }
     },
     defaultJobOptions: {
         attempts: 5,

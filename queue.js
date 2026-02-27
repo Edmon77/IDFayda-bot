@@ -13,12 +13,31 @@ const PDF_FETCH_RETRY_DELAY_MS = 2000;
 const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_CONCURRENCY, 10) || 10, 1), 50);
 
 
+const IORedis = require('ioredis');
+
+// Shared Redis options for stability
+const redisOptions = {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+  retryStrategy: (times) => Math.min(times * 100, 3000),
+  reconnectOnError: (err) => {
+    const targetError = 'READONLY';
+    if (err.message.includes(targetError)) return true;
+    return false;
+  }
+};
+
 // Bull queue configuration - use Redis URL directly
-const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
-  redis: {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    retryStrategy: (times) => Math.min(times * 100, 3000)
+const pdfQueue = new Queue('pdf generation', {
+  createClient: (type) => {
+    switch (type) {
+      case 'client':
+      case 'subscriber':
+      case 'bclient':
+        return new IORedis(process.env.REDIS_URL, redisOptions);
+      default:
+        return new IORedis(process.env.REDIS_URL, redisOptions);
+    }
   },
   defaultJobOptions: {
     attempts: 3,
