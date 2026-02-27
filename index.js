@@ -18,7 +18,7 @@ const crypto = require('crypto');
 const helmet = require('helmet');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const Captcha = require('2captcha');
+const SolveCaptcha = require('./utils/solveCaptcha');
 const fayda = require('./utils/faydaClient');
 const { Markup } = require('telegraf');
 
@@ -440,7 +440,7 @@ app.use((err, req, res, _next) => {
 const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
 const RECAPTCHA_OPTS = { version: 'v3', action: 'verify', min_score: 0.5 };
 const HEADERS = fayda.HEADERS;
-const solver = new Captcha.Solver(process.env.CAPTCHA_KEY);
+const solver = new SolveCaptcha(process.env.CAPTCHA_KEY);
 
 const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
 
