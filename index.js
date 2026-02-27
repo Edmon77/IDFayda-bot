@@ -239,6 +239,41 @@ app.get('/pending', requireWebAuth, asyncHandler(async (req, res) => {
   res.render('pending', { pending });
 }));
 
+app.get('/announcements', requireWebAuth, asyncHandler(async (req, res) => {
+  const userCount = await User.countDocuments({ role: { $in: ['admin', 'user'] } });
+  res.render('announcements', {
+    userCount,
+    success: req.query.success,
+    error: req.query.error
+  });
+}));
+
+app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) => {
+  const { message } = req.body;
+  if (!message || message.trim().length === 0) {
+    return res.redirect('/announcements?error=Message cannot be empty');
+  }
+
+  // Fetch all users to broadcast to (including admins and subusers)
+  const users = await User.find({ role: { $in: ['admin', 'user'] } }).select('telegramId').lean();
+
+  if (users.length === 0) {
+    return res.redirect('/announcements?error=No active users found to broadcast to');
+  }
+
+  // Queue up the broadcast jobs
+  for (const user of users) {
+    await broadcastQueue.add({
+      telegramId: user.telegramId,
+      message: message.trim(),
+      parseMode: 'Markdown'
+    });
+  }
+
+  logger.info(`Announcement broadcast enqueued for ${users.length} users by web admin.`);
+  res.redirect(`/announcements?success=Broadcast for ${users.length} users has been enqueued!`);
+}));
+
 app.post('/pending/remove/:id', requireWebAuth, asyncHandler(async (req, res) => {
   await User.deleteOne({ telegramId: req.params.id, role: 'unauthorized' });
   res.redirect('/pending');
