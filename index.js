@@ -737,18 +737,19 @@ bot.action(/view_admins_page_(\d+)/, async (ctx) => {
     if (!(await adminGuard(ctx))) return;
     const page = parseInt(ctx.match[1], 10);
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
+    const lang = ctx.state.user?.language || 'en';
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
-    let text = '👑 **Your Admins** (Page ' + p + '/' + totalPages + '):\n\n';
+    let text = `${t('admin_list_title', lang)} (${t('admin_list_page', lang).replace('{p}', p).replace('{totalPages}', totalPages)}):\n\n`;
     pageAdmins.forEach((a, i) => {
       const count = (a.subUsers || []).length;
       text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'})\n`;
-      text += `   ID: \`${a.telegramId}\`\n   Users: ${count}\n\n`;
+      text += `   ID: \`${a.telegramId}\`\n   ${t('your_users', lang)}: ${count}\n\n`;
     });
     const btns = [];
     if (totalPages > 1) {
       const row = [];
-      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `view_admins_page_${p - 1}`));
-      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `view_admins_page_${p + 1}`));
+      if (p > 1) row.push(Markup.button.callback('⏮️ ' + t('back', lang), `view_admins_page_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback(t('btn_next', lang), `view_admins_page_${p + 1}`));
       if (row.length) btns.push(row);
     }
     btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
@@ -797,26 +798,27 @@ bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[1], 10);
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, page);
+    const lang = ctx.state.user?.language || 'en';
     if (!pageAdmins.length) {
-      await ctx.editMessageText('❌ No admins to remove.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+      await ctx.editMessageText(t('no_admins_remove', lang), Markup.inlineKeyboard([[Markup.button.callback(t('back', lang), 'manage_users')]]));
       return;
     }
-    let text = '**Select an admin to remove:**\n\n';
+    let text = `**${t('select_user_remove', lang)}**\n\n`;
     pageAdmins.forEach((a, i) => {
       text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
     });
-    const btns = pageAdmins.map(a => [Markup.button.callback(`❌ Remove ${escMd(a.firstName) || a.telegramId}`, `remove_buyer_${a.telegramId}`)]);
+    const btns = pageAdmins.map(a => [Markup.button.callback(t('remove_btn', lang).replace('{name}', escMd(a.firstName) || a.telegramId), `remove_buyer_${a.telegramId}`)]);
     if (totalPages > 1) {
       const row = [];
-      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_admin_list_${p - 1}`));
-      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `remove_admin_list_${p + 1}`));
+      if (p > 1) row.push(Markup.button.callback('⏮️ ' + t('back', lang), `remove_admin_list_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback(t('btn_next', lang), `remove_admin_list_${p + 1}`));
       btns.push(row);
     }
-    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    btns.push([Markup.button.callback(t('back', lang), 'manage_users')]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove admin list error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -885,12 +887,13 @@ bot.action('remove_user_under_admin', async (ctx) => {
       text += `${i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
     });
     const btns = pageAdmins.map(a => [Markup.button.callback(`${a.firstName || a.telegramId}`, `remove_under_admin_${a.telegramId}_1`)]);
-    if (totalPages > 1) btns.push([Markup.button.callback('⏭️ Next', `remove_under_admin_list_2`)]);
-    btns.push([Markup.button.callback('🔙 Back', 'manage_users')]);
+    const lang = ctx.state.user?.language || 'en';
+    if (totalPages > 1) btns.push([Markup.button.callback(t('btn_next', lang), `remove_under_admin_list_2`)]);
+    btns.push([Markup.button.callback(t('back', lang), 'manage_users')]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove user under admin error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -912,20 +915,21 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
     }
     let text = `**Remove user under ${escMd(admin.firstName) || admin.telegramId}:**\n\n`;
     pageUsers.forEach((u, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'})\n`;
     });
     const btns = pageUsers.map(u => [Markup.button.callback(`❌ ${escMd(u.firstName) || u.telegramId}`, `remove_sub_${adminId}_${u.telegramId}`)]);
+    const lang = ctx.state.user?.language || 'en';
     if (totalPages > 1) {
       const row = [];
-      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `remove_under_admin_${adminId}_${p - 1}`));
-      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `remove_under_admin_${adminId}_${p + 1}`));
+      if (p > 1) row.push(Markup.button.callback('⏮️ ' + t('back', lang), `remove_under_admin_${adminId}_${p - 1}`));
+      if (p < totalPages) row.push(Markup.button.callback(t('btn_next', lang), `remove_under_admin_${adminId}_${p + 1}`));
       btns.push(row);
     }
-    btns.push([Markup.button.callback('🔙 Back', 'remove_user_under_admin')]);
+    btns.push([Markup.button.callback(t('back', lang), 'remove_user_under_admin')]);
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
-    logger.error('Remove under admin error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    logger.error('Remove under admin page error:', error);
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -987,7 +991,7 @@ bot.action(/subusers_(\d+)/, async (ctx) => {
 });
 
 // ---------- Dashboard Handler (shared by inline button and reply keyboard) ----------
-async function handleDashboard(ctx, isInline) {
+async function handleDashboard(ctx, isInline, page = 1) {
   const buyer = ctx.state.user;
   if (!buyer || buyer.role !== 'admin') return;
 
@@ -1000,12 +1004,12 @@ async function handleDashboard(ctx, isInline) {
   const buyerOwn = buyer.downloadCount || 0;
   const archived = buyer.archivedSubDownloads || 0;
   const total = buyerOwn + subDownloads + archived;
-  const { items: pageSubs, page: p, totalPages } = paginate(subs, 1);
+  const { items: pageSubs, page: p, totalPages } = paginate(subs, page);
 
+  const lang = buyer.language || 'en';
   let text = `${t('admin_dashboard', lang)}\n\n`;
   text += `${t('role_admin', lang)}: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
   text += `ID: \`${buyer.telegramId}\`\n\n`;
-  const lang = buyer.language || 'en';
   text += `**${t('work_summary', lang)}**\n`;
   text += `${t('own_pdfs', lang)} ${buyerOwn}\n`;
   text += `${t('your_users', lang)} ${subs.length}\n`;
@@ -1018,11 +1022,12 @@ async function handleDashboard(ctx, isInline) {
   });
 
   const keyboard = [];
+  keyboard.push([Markup.button.callback(t('btn_manage', lang), 'manage_users')]);
   // Only add pagination buttons if needed
   if (totalPages > 1) {
     const row = [];
     if (p > 1) row.push(Markup.button.callback('⏮️ ' + t('back', lang), `dashboard_buyer_page_${p - 1}`));
-    if (p < totalPages) row.push(Markup.button.callback('⏭️ ' + (lang === 'am' ? 'ቀጣይ' : 'Next'), `dashboard_buyer_page_${p + 1}`));
+    if (p < totalPages) row.push(Markup.button.callback(t('btn_next', lang), `dashboard_buyer_page_${p + 1}`));
     keyboard.push(row);
   }
 
@@ -1048,6 +1053,7 @@ async function handleUserDashboard(ctx, isInline) {
   if (!user || user.role !== 'user') return;
 
   const ownDownloads = user.downloadCount || 0;
+  const lang = user.language || 'en';
 
   let text = `${t('your_dashboard', lang)}\n\n`;
   text += `${t('user_label', lang)} ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\n`;
@@ -1055,17 +1061,17 @@ async function handleUserDashboard(ctx, isInline) {
   text += `**${t('work_summary', lang)}**\n`;
   text += `${t('total_pdfs', lang)} ${ownDownloads}\n\n`;
 
-  text += '**Recent Activity**\n';
+  text += `**${t('recent_activity', lang)}**\n`;
   const history = user.downloadHistory || [];
   // Sort history descending by date
   const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
   const recent3 = sortedHistory.slice(0, 3);
 
   if (recent3.length === 0) {
-    text += 'No recent activity.\n';
+    text += `${t('no_recent_activity', lang)}\n`;
   } else {
     recent3.forEach(entry => {
-      text += `${entry.date}\n   Total PDFs Downloaded: ${entry.count}\n`;
+      text += `${entry.date}\n   ${t('total_pdfs_downloaded', lang)} ${entry.count}\n`;
     });
   }
 
@@ -1091,37 +1097,9 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
     const page = parseInt(ctx.match[1], 10);
-    const buyer = ctx.state.user;
-    const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
-      .select('telegramId firstName telegramUsername downloadCount')
-      .lean()
-      .exec();
-    const subDownloads = subs.reduce((sum, sub) => sum + (sub.downloadCount || 0), 0);
-    const buyerOwn = buyer.downloadCount || 0;
-    const archived = buyer.archivedSubDownloads || 0;
-    const total = buyerOwn + subDownloads + archived;
-    const { items: pageSubs, page: p, totalPages } = paginate(subs, page);
-    let text = '📊 **YOUR ADMIN DASHBOARD**\n\n';
-    text += `Admin: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
-    text += `ID: \`${buyer.telegramId}\`\n\n`;
-    text += '**Work Summary:**\n';
-    text += `Your Own PDFs: ${buyerOwn}\nYour Users: ${subs.length}\nUsers' PDFs: ${subDownloads}\nTotal PDFs: ${total}\n\n`;
-    text += `**Your Users** (Page ${p}/${totalPages})\n\n`;
-    pageSubs.forEach((sub, i) => {
-      text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
-      text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
-    });
-    const keyboard = [];
-    keyboard.push([Markup.button.callback('👥 Manage Users', 'manage_users')]);
-    if (totalPages > 1) {
-      const row = [];
-      if (p > 1) row.push(Markup.button.callback('⏮️ Previous', `dashboard_buyer_page_${p - 1}`));
-      if (p < totalPages) row.push(Markup.button.callback('⏭️ Next', `dashboard_buyer_page_${p + 1}`));
-      keyboard.push(row);
-    }
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
-  } catch (e) {
-    logger.error('Dashboard buyer page error:', e);
+    await handleDashboard(ctx, true, page);
+  } catch (error) {
+    logger.error('Dashboard buyer page error:', error);
     ctx.reply('❌ Failed.').catch(() => { });
   }
 });
@@ -1129,8 +1107,8 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
 // ---------- Manage Users Handler (shared by inline button and reply keyboard) ----------
 async function handleManageUsers(ctx, isInline) {
   const user = ctx.state.user;
+  const lang = user?.language || 'en';
   if (!user || !user.role) {
-    const lang = user?.language || 'en';
     return ctx.reply(t('error_session', lang));
   }
 
@@ -1156,8 +1134,8 @@ async function handleManageUsers(ctx, isInline) {
   }
 
   // Non-admin users shouldn't have this button, send welcome
-  const title = getPanelTitle(user.role);
-  await ctx.reply(title, { parse_mode: 'Markdown', ...getReplyKeyboard(user.role) });
+  const title = getPanelTitle(user.role, lang);
+  await ctx.reply(title, { parse_mode: 'Markdown', ...getReplyKeyboard(user.role, lang) });
 }
 
 bot.action('manage_users', async (ctx) => {
@@ -1166,8 +1144,9 @@ bot.action('manage_users', async (ctx) => {
     await handleManageUsers(ctx, true);
   } catch (error) {
     logger.error('Manage users error:', error?.message || error, error?.stack);
+    const lang = ctx.state.user?.language || 'en';
     try {
-      ctx.reply('❌ Failed to load users. Please try again.').catch(() => { });
+      ctx.reply(t('dashboard_load_fail', lang)).catch(() => { });
     } catch (_) { }
   }
 });

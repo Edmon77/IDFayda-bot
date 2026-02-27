@@ -82,6 +82,11 @@ const strings = {
         access_restored: '✅ Your access has been restored!',
         error_access_revoked_credits: '❌ Access Revoked, Pay Your Credits !!',
         error_access_revoked_admin: '❌ Access Revoked, Contact Admin!!',
+        recent_activity: 'Recent Activity',
+        no_recent_activity: 'No recent activity.',
+        total_pdfs_downloaded: 'Total PDFs Downloaded:',
+        admin_list_title: '👑 **Your Admins**',
+        admin_list_page: 'Your Admins (Page {p}/{totalPages})',
     },
     am: {
         btn_start: '🚀 ጀምር',
@@ -166,8 +171,15 @@ const strings = {
         access_restored: '✅ መዳረሻዎ ዳግም እንዲሰራ ተደርጓል!',
         error_access_revoked_credits: '❌ መዳረሻዎ ተዘግቷል — እባክዎን የወሰዱትን ክሬዲት ይክፈሉ!',
         error_access_revoked_admin: '❌ መዳረሻዎ ተዘግቷል — እባክዎን አስተዳዳሪውን ያነጋግሩ!',
+        recent_activity: 'የቅርብ ጊዜ እንቅስቃሴ',
+        no_recent_activity: 'ምንም የቅርብ ጊዜ እንቅስቃሴ የለም።',
+        total_pdfs_downloaded: 'ጠቅላላ የወረዱ ፒዲኤፎች(PDFs)፦',
+        admin_list_title: '👑 **የእርስዎ አስተዳዳሪዎች**',
+        admin_list_page: 'የእርስዎ አስተዳዳሪዎች (ገጽ {p}/{totalPages})',
     }
 };
+
+
 
 function t(key, lang = 'en') {
     const l = strings[lang] ? lang : 'en';
