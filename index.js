@@ -237,8 +237,13 @@ app.get('/pending', requireWebAuth, asyncHandler(async (req, res) => {
   const pending = await User.find({ role: 'unauthorized' }).sort({ lastActive: -1 }).limit(50).lean();
   res.render('pending', { pending });
 }));
+
+app.post('/pending/remove/:id', requireWebAuth, asyncHandler(async (req, res) => {
+  await User.deleteOne({ telegramId: req.params.id, role: 'unauthorized' });
+  res.redirect('/pending');
+}));
 app.post('/add-buyer', requireWebAuth, asyncHandler(async (req, res) => {
-  const { telegramId, expiryDays = 30 } = req.body;
+  const { telegramId, expiryDays = 30, maxSubUsers = 9 } = req.body;
   if (!telegramId || !/^\d+$/.test(String(telegramId).trim())) {
     return res.redirect('/dashboard?error=invalid_id');
   }
@@ -257,6 +262,7 @@ app.post('/add-buyer', requireWebAuth, asyncHandler(async (req, res) => {
   user.addedBy = undefined;
   user.expiryDate = expiry;
   user.subUsers = [];
+  user.maxSubUsers = parseInt(maxSubUsers) || 9;
   await user.save();
   try {
     await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
@@ -282,7 +288,13 @@ app.post('/buyer/:id/add-sub', requireWebAuth, asyncHandler(async (req, res) => 
   let subUser = await User.findOne({ telegramId: tid });
   if (!subUser) return res.redirect(`/buyer/${req.params.id}?error=must_start`);
   if (subUser.role === 'admin') return res.redirect(`/buyer/${req.params.id}?error=already_admin`);
-  if ((buyer.subUsers || []).length >= 9) return res.redirect(`/buyer/${req.params.id}?error=full`);
+
+  const currentSubsCount = (buyer.subUsers || []).length;
+  const maxSubs = typeof buyer.maxSubUsers === 'number' ? buyer.maxSubUsers : 9;
+  if (maxSubs !== -1 && currentSubsCount >= maxSubs) {
+    return res.redirect(`/buyer/${req.params.id}?error=full`);
+  }
+
   if ((buyer.subUsers || []).includes(tid)) return res.redirect(`/buyer/${req.params.id}?error=already`);
   buyer.subUsers = buyer.subUsers || [];
   buyer.subUsers.push(tid);

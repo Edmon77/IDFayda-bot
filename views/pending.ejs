@@ -114,6 +114,31 @@
             border-radius: 4px;
         }
 
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            opacity: 0.9;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
@@ -185,6 +210,7 @@
                                 <th>Username</th>
                                 <th>Telegram ID</th>
                                 <th>Last Active</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -199,6 +225,13 @@
                                     <td data-label="ID"><code><%= u.telegramId %></code></td>
                                     <td data-label="Last Active">
                                         <%= u.lastActive ? new Date(u.lastActive).toLocaleDateString() : '—' %>
+                                    </td>
+                                    <td data-label="Actions">
+                                        <form method="POST" action="/pending/remove/<%= u.telegramId %>"
+                                            style="display:inline;" onsubmit="return confirm('Remove pending user?');">
+                                            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                                            <button type="submit" class="btn btn-danger">Remove</button>
+                                        </form>
                                     </td>
                                 </tr>
                                 <% }) %>

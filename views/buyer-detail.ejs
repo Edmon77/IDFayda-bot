@@ -250,7 +250,8 @@
                     <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : '—' %>
                 </p>
                 <p><strong>Users:</strong>
-                    <%= buyer.subUsers ? buyer.subUsers.length : 0 %>/9
+                    <%= buyer.subUsers ? buyer.subUsers.length : 0 %> / <%= buyer.maxSubUsers===-1 ? '∞' :
+                            (buyer.maxSubUsers ?? 9) %>
                 </p>
             </div>
         </div>
@@ -263,14 +264,14 @@
                 <p><strong>Users' PDFs:</strong>
                     <%= subUsersTotal %>
                 </p>
-                <% if (archived > 0) { %>
-                <p><strong>Removed Users' PDFs:</strong>
-                    <%= archived %>
-                </p>
-                <% } %>
-                <p><strong>Total:</strong>
-                    <%= totalDownloads %>
-                </p>
+                <% if (archived> 0) { %>
+                    <p><strong>Removed Users' PDFs:</strong>
+                        <%= archived %>
+                    </p>
+                    <% } %>
+                        <p><strong>Total:</strong>
+                            <%= totalDownloads %>
+                        </p>
             </div>
             <div style="margin-top: 1rem;">
                 <form method="POST" action="/buyer/<%= buyer.telegramId %>/clear-downloads" style="display: inline;"
@@ -296,7 +297,7 @@
                 <% if (typeof error !=='undefined' && error) { %>
                     <p class="msg err">
                         <%= error==='must_start' ? 'User must send /start first' : error==='invalid_id' ? 'Invalid ID' :
-                            error==='full' ? 'Max 9 users' : error==='already' ? 'Already added' :
+                            error==='full' ? 'Limit reached' : error==='already' ? 'Already added' :
                             error==='already_admin' ? 'That user is an admin' : error %>
                     </p>
                     <% } %>
@@ -314,11 +315,10 @@
                                     <%= sub.firstName || sub.telegramUsername || sub.telegramId %>
                                 </strong><br>
                                 <span class="sub-info">ID: <%= sub.telegramId %> · PDFs: <%= sub.downloadCount || 0 %>
-                                            </span>
+                                </span>
                             </span>
                             <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove-sub/<%= sub.telegramId %>"
-                                style="display: inline;"
-                                onsubmit="return confirm('Remove this user?');">
+                                style="display: inline;" onsubmit="return confirm('Remove this user?');">
                                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                                 <button type="submit" class="btn btn-danger">Remove</button>
                             </form>

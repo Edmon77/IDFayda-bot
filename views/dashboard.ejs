@@ -441,7 +441,31 @@
                     <label>Expiry (days)</label>
                     <input type="number" name="expiryDays" value="30" min="1">
                 </div>
+                <div>
+                    <label>Max Sub-Users</label>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="number" id="maxSubUsersInput" name="maxSubUsers" value="9" min="0" style="width: 80px;">
+                        <label style="margin: 0; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; text-transform: none; color: var(--text);">
+                            <input type="checkbox" id="unlimitedSubsToggle" style="width: auto;"> Unlimited
+                        </label>
+                    </div>
+                </div>
                 <button type="submit" class="btn btn-primary">Add Admin</button>
+
+                <script>
+                    const unlimitedToggle = document.getElementById('unlimitedSubsToggle');
+                    const maxSubUsersInput = document.getElementById('maxSubUsersInput');
+
+                    unlimitedToggle.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            maxSubUsersInput.disabled = true;
+                            maxSubUsersInput.value = '-1';
+                        } else {
+                            maxSubUsersInput.disabled = false;
+                            maxSubUsersInput.value = '9';
+                        }
+                    });
+                </script>
                 <% if (typeof error !=='undefined' && error) { %>
                     <p class="msg err">
                         <%= error==='user_must_start' ? 'User must send /start first' : error==='invalid_id'
@@ -486,7 +510,7 @@
                                 <%= b.totalDownloads %>
                             </td>
                             <td data-label="Users">
-                                <%= b.subUsers ? b.subUsers.length : 0 %>/9
+                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers === -1 ? '∞' : (b.maxSubUsers ?? 9) %>
                             </td>
                             <td data-label="Expiry"
                                 class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">

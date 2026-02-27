@@ -14,6 +14,7 @@ const userSchema = new mongoose.Schema({
   addedBy: { type: String, index: true },
   expiryDate: { type: Date, index: true },
   subUsers: [{ type: String }],
+  maxSubUsers: { type: Number, default: 9 },
   // isWaitingApproval removed — pending users are identified by role: 'unauthorized'
   createdAt: { type: Date, default: Date.now, index: true },
   lastActive: { type: Date, index: true },
