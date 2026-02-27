@@ -2020,11 +2020,14 @@ bot.on('text', async (ctx) => {
 
             timer.startStep('idVerification');
             apiWasCalled = true;
+            logger.info(`Calling Fayda /verify API for user ${userId} (attempt ${attempt})...`);
+            if (!captchaToken) logger.warn(`⚠️ Warning: captchaToken is empty for user ${userId}`);
             const res = await fayda.api.post('/verify', {
               idNumber: validation.value,
               verificationMethod: validation.type || 'FCN',
               captchaValue: captchaToken
             }, { timeout: 35000 });
+            logger.info(`Fayda /verify API success for user ${userId}`);
             timer.endStep('idVerification');
 
             verificationCooldown.delete(userId);
