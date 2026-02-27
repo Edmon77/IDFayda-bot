@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
   lastName: String,
   // admin | user | unauthorized
   role: { type: String, enum: ['admin', 'user', 'unauthorized'], default: 'unauthorized', index: true },
+  language: { type: String, default: 'en' },
   // For users: telegramId of their admin. For admins: optional (set if added via web dashboard).
   parentAdmin: { type: String, index: true },
   // Legacy alias; we keep subUsers on admin for quick list

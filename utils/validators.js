@@ -1,11 +1,13 @@
+const { t } = require('./i18n');
+
 /**
  * Input validation utilities
  */
 
 // FCN = 16 digits, FIN = 12 digits (spaces allowed, e.g. 6320 7510 3126)
-function validateFaydaId(id) {
+function validateFaydaId(id, lang = 'en') {
   if (!id || typeof id !== 'string') {
-    return { valid: false, error: 'ID must be a string' };
+    return { valid: false, error: t('id_invalid', lang) };
   }
   const cleaned = id.replace(/\s/g, ''); // strip spaces (FIN can be 6320 7510 3126)
   if (/^\d{16}$/.test(cleaned)) {
@@ -14,21 +16,21 @@ function validateFaydaId(id) {
   if (/^\d{12}$/.test(cleaned)) {
     return { valid: true, value: cleaned, type: 'FIN' };
   }
-  return { valid: false, error: 'Enter 16-digit FCN or 12-digit FIN (e.g. 8037042063274197 or 632075103126)' };
+  return { valid: false, error: t('id_invalid', lang) };
 }
 
-function validateOTP(otp) {
+function validateOTP(otp, lang = 'en') {
   if (!otp || typeof otp !== 'string') {
-    return { valid: false, error: 'OTP must be a string' };
+    return { valid: false, error: t('otp_invalid', lang) };
   }
   const cleaned = otp.trim();
   if (!/^\d{4,8}$/.test(cleaned)) {
-    return { valid: false, error: 'OTP must be 4-8 digits' };
+    return { valid: false, error: t('otp_invalid', lang) };
   }
   return { valid: true, value: cleaned };
 }
 
-function validateTelegramId(id) {
+function validateTelegramId(id, lang = 'en') {
   if (!id || typeof id !== 'string') {
     return { valid: false, error: 'Telegram ID must be a string' };
   }

@@ -29,7 +29,8 @@ const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
 const { validateFaydaId, validateOTP, escMd, displayName } = require('./utils/validators');
 const { parsePdfResponse } = require('./utils/pdfHelper');
-const { BTN, getReplyKeyboard, getPanelTitle, paginate } = require('./utils/menu');
+const { t } = require('./utils/i18n');
+const { getReplyKeyboard, getPanelTitle, paginate, getMainMenu } = require('./utils/menu');
 const { migrateRoles } = require('./utils/migrateRoles');
 const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
@@ -457,7 +458,7 @@ const solver = new SolveCaptcha(process.env.CAPTCHA_KEY);
 const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
 
 // ---------- Error Handler Middleware ----------
-bot.catch((err, ctx) => {
+bot.catch(async (err, ctx) => {
   // Ignore common Telegram errors that don't need action
   const ignorableErrors = [
     'bot was blocked by the user',
@@ -492,7 +493,8 @@ bot.catch((err, ctx) => {
   // Try to send error message only if we have a valid context and chat
   if (ctx && ctx.chat && ctx.from) {
     try {
-      ctx.reply('❌ An error occurred. Please try again later or contact support.').catch(() => {
+      const lang = ctx.from ? (await User.findOne({ telegramId: ctx.from.id.toString() }).select('language').lean())?.language || 'en' : 'en';
+      ctx.reply(t('error_generic', lang)).catch(() => {
         // Silently ignore if we can't send (user blocked, etc.)
       });
     } catch (e) {
@@ -511,7 +513,8 @@ bot.use(async (ctx, next) => {
     const rateLimit = await checkUserRateLimit(telegramId, 30, 60000);
     if (!rateLimit.allowed) {
       const waitTime = rateLimit.resetTime ? Math.ceil((rateLimit.resetTime - Date.now()) / 1000) : 60;
-      return ctx.reply(`⏳ Too many requests. Please wait ${waitTime} seconds.`);
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.reply(t('error_rate_limit', lang).replace('{waitTime}', waitTime));
     }
 
     // Single DB call: upsert profile + return current doc (replaces two separate queries)
@@ -560,7 +563,8 @@ bot.use(async (ctx, next) => {
     return next();
   } catch (error) {
     logger.error('Authorization middleware error:', error);
-    return ctx.reply('❌ An error occurred. Please try again.');
+    const lang = ctx.state.user?.language || 'en';
+    return ctx.reply(t('error_generic', lang));
   }
 });
 
@@ -583,6 +587,7 @@ bot.start(async (ctx) => {
     ctx.session = ctx.session || {};
     ctx.session.step = null;
     const user = ctx.state.user;
+    const lang = user.language || 'en';
 
     // Aggressive pre-solve: Start solving CAPTCHA immediately when user opens the bot
     const userId = ctx.from.id.toString();
@@ -600,15 +605,54 @@ bot.start(async (ctx) => {
       }, 10 * 60 * 1000);
     }
 
-    const title = getPanelTitle(user.role);
+    const title = getPanelTitle(user.role, lang);
     await ctx.reply(title, {
       parse_mode: 'Markdown',
-      ...getReplyKeyboard(user.role)
+      ...getReplyKeyboard(user.role, lang)
     });
   } catch (error) {
     logger.error('Start command error:', error);
-    ctx.reply('❌ Failed to load menu. Please try again.').catch(() => { });
+    ctx.reply('❌ Error. Please try again.').catch(() => { });
   }
+});
+
+// ---------- Language Selection ----------
+bot.action('select_language', async (ctx) => {
+  const lang = ctx.state.user.language || 'en';
+  await ctx.editMessageText(t('lang_select', lang), Markup.inlineKeyboard([
+    [Markup.button.callback('English 🇺🇸', 'set_lang_en'), Markup.button.callback('Amharic 🇪🇹', 'set_lang_am')],
+    [Markup.button.callback('⬅️ Back', 'main_menu')]
+  ]));
+});
+
+bot.action(/set_lang_(.+)/, async (ctx) => {
+  try {
+    const newLang = ctx.match[1];
+    const user = ctx.state.user;
+    user.language = newLang;
+    await User.updateOne({ telegramId: user.telegramId }, { $set: { language: newLang } });
+
+    await ctx.answerCbQuery(t('lang_updated', newLang));
+    const title = getPanelTitle(user.role, newLang);
+    await ctx.editMessageText(title, {
+      parse_mode: 'Markdown',
+      ...getMainMenu(user.role, newLang)
+    });
+    // Also update reply keyboard
+    await ctx.reply(t('lang_updated', newLang), getReplyKeyboard(user.role, newLang));
+  } catch (error) {
+    logger.error('Set language error:', error);
+    await ctx.answerCbQuery('❌ Error changing language.');
+  }
+});
+
+bot.action('main_menu', async (ctx) => {
+  const user = ctx.state.user;
+  const lang = user.language || 'en';
+  await ctx.editMessageText(getPanelTitle(user.role, lang), {
+    parse_mode: 'Markdown',
+    ...getMainMenu(user.role, lang)
+  });
 });
 
 // ---------- Cancel Handler (shared by /cancel command) ----------
@@ -618,11 +662,12 @@ async function handleCancel(ctx) {
   ctx.session.processingOTP = false;
   ctx.session.otpRetryCount = 0;
   const userId = ctx.from.id.toString();
+  const lang = ctx.state.user.language || 'en';
   // Release download lock and clean up pending background tasks
   activeDownloads.delete(userId);
   pendingCaptchas.delete(userId);
   pendingVerifications.delete(userId);
-  await ctx.reply('❌ Cancelled.');
+  await ctx.reply(t('download_cancelled', lang));
 }
 
 bot.command('cancel', async (ctx) => {
@@ -638,8 +683,9 @@ async function handleDownload(ctx, isInline) {
   ctx.session = ctx.session || {};
   // If user already has a download in progress, don't reset their session
   const userId = ctx.from.id.toString();
+  const lang = ctx.state.user.language || 'en';
   if (activeDownloads.has(userId)) {
-    const msg = '⏳ You already have a download in progress. Please wait.';
+    const msg = t('already_downloading', lang);
     if (isInline) {
       await ctx.answerCbQuery(msg, { show_alert: true }).catch(() => { });
     } else {
@@ -657,7 +703,7 @@ async function handleDownload(ctx, isInline) {
     }));
   }
 
-  const text = "🆔 Please enter your FCN/FIN:";
+  const text = t('enter_id', lang);
   if (isInline) {
     await ctx.editMessageText(text, { parse_mode: 'Markdown' });
   } else {
@@ -671,24 +717,12 @@ bot.action('download', async (ctx) => {
     await handleDownload(ctx, true);
   } catch (error) {
     logger.error('Download action error:', error);
-    ctx.reply('❌ Failed to start download. Please try again.').catch(() => { });
+    const lang = ctx.state.user.language || 'en';
+    ctx.reply(t('pdf_fail', lang)).catch(() => { });
   }
 });
 
-// ---------- Back to Main Menu (inline button) ----------
-bot.action('main_menu', async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-    ctx.session = ctx.session || {};
-    ctx.session.step = null;
-    const user = ctx.state.user;
-    const title = getPanelTitle(user.role);
-    // Remove inline buttons from the old message — reply keyboard is persistent
-    await ctx.editMessageText(title, { parse_mode: 'Markdown' });
-  } catch (error) {
-    logger.error('Main menu action error:', error);
-  }
-});
+// Redundant main_menu handler removed (consolidated with the one above)
 
 
 
@@ -1088,7 +1122,8 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
 async function handleManageUsers(ctx, isInline) {
   const user = ctx.state.user;
   if (!user || !user.role) {
-    return ctx.reply('❌ Session error. Send /start again.');
+    const lang = user?.language || 'en';
+    return ctx.reply(t('error_session', lang));
   }
 
   if (user.role === 'admin') {
@@ -1478,12 +1513,18 @@ bot.on('text', async (ctx) => {
   try {
     const text = ctx.message.text.trim();
     const state = ctx.session;
+    const user = ctx.state.user;
+    const lang = user.language || 'en';
 
     // --- Reply Keyboard button routing (context-aware download lock) ---
     const userId = ctx.from.id.toString();
     const hasActiveDownload = activeDownloads.has(userId);
 
-    if (text === BTN.MANAGE || text === BTN.DASHBOARD) {
+    const isManage = text === t('btn_manage', 'en') || text === t('btn_manage', 'am');
+    const isDashboard = text === t('btn_dashboard', 'en') || text === t('btn_dashboard', 'am');
+    const isLanguage = text === t('btn_language', 'en') || text === t('btn_language', 'am');
+
+    if (isManage || isDashboard || isLanguage) {
       // Non-download menus: auto-cancel any active download, then show menu
       if (hasActiveDownload) {
         activeDownloads.delete(userId);
@@ -1493,27 +1534,36 @@ bot.on('text', async (ctx) => {
         ctx.session.step = null;
         ctx.session.processingOTP = false;
         ctx.session.otpRetryCount = 0;
-        await ctx.reply('❌ Download Cancelled.');
+        await ctx.reply(t('download_cancelled', lang));
       }
       ctx.session = ctx.session || {};
       ctx.session.step = null;
-      if (text === BTN.MANAGE) {
+
+      if (isLanguage) {
+        const titleSelection = t('lang_select', lang);
+        return ctx.reply(titleSelection, Markup.inlineKeyboard([
+          [Markup.button.callback('English 🇺🇸', 'set_lang_en'), Markup.button.callback('Amharic 🇪🇹', 'set_lang_am')]
+        ]));
+      }
+
+      if (isManage) {
         return handleManageUsers(ctx, false);
       } else {
         try {
-          if (ctx.state.user && ctx.state.user.role === 'admin') {
+          if (user.role === 'admin') {
             return await handleDashboard(ctx, false);
-          } else if (ctx.state.user && ctx.state.user.role === 'user') {
+          } else if (user.role === 'user') {
             return await handleUserDashboard(ctx, false);
           }
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
-          return ctx.reply('❌ Failed to load dashboard.');
+          return ctx.reply('❌ Error loading dashboard.');
         }
       }
     }
 
-    if (text === BTN.START) {
+    const isStart = text === t('btn_start', 'en') || text === t('btn_start', 'am');
+    if (isStart) {
       // Silently cancel any active download and start fresh (no "Download Cancelled" message)
       if (hasActiveDownload) {
         activeDownloads.delete(userId);
@@ -1766,7 +1816,7 @@ bot.on('text', async (ctx) => {
 
     // ----- Download Flow: ID Step -----
     if (state.step === 'ID') {
-      const validation = validateFaydaId(text);
+      const validation = validateFaydaId(text, lang);
       if (!validation.valid) {
         return ctx.reply(`❌ ${validation.error}`, { parse_mode: 'Markdown' });
       }
@@ -1775,14 +1825,14 @@ bot.on('text', async (ctx) => {
 
       // Per-user download lock — reject if already downloading
       if (activeDownloads.has(userId)) {
-        return ctx.reply('⏳ You already have a download in progress. Please wait.');
+        return ctx.reply(t('already_downloading', lang));
       }
 
       // Verification cooldown — prevent OTP flood on Fayda API
       const lastFail = verificationCooldown.get(userId);
       if (lastFail && (Date.now() - lastFail) < VERIFICATION_COOLDOWN_MS) {
         const waitSec = Math.ceil((VERIFICATION_COOLDOWN_MS - (Date.now() - lastFail)) / 1000);
-        return ctx.reply(`⏳ Please wait ${waitSec} seconds before trying again.`);
+        return ctx.reply(t('error_rate_limit', lang).replace('{waitTime}', waitSec));
       }
 
       activeDownloads.set(userId, true);
@@ -1791,7 +1841,7 @@ bot.on('text', async (ctx) => {
       ctx.session.id = validation.value;
       ctx.session.verificationMethod = validation.type || 'FCN';
       ctx.session.step = 'OTP';
-      const otpPromptMsg = await ctx.reply("⏳ Sending OTP to your phone...");
+      const otpPromptMsg = await ctx.reply(t('enter_otp', lang));
 
       // Launch captcha + verify in background (runs while user waits for SMS)
       const timer = new DownloadTimer(userId);
@@ -1850,6 +1900,7 @@ bot.on('text', async (ctx) => {
 
       // Update message when verify completes (non-blocking — runs in background)
       verifyPromise.then(result => {
+        const lang = user.language || 'en';
         // C1 Fix: If user restarted or cleared session, this promise is no longer the active one
         if (pendingVerifications.get(userId) !== verifyPromise) {
           return; // Silent abort — prevents ghost state updates
@@ -1857,15 +1908,15 @@ bot.on('text', async (ctx) => {
 
         if (result.success) {
           ctx.telegram.editMessageText(ctx.chat.id, otpPromptMsg.message_id, null,
-            "✅ OTP sent! Enter the code:",
+            `✅ ${t('enter_otp', lang)}`,
             { parse_mode: 'Markdown' }
           ).catch(() => { });
         } else {
           const rawMsg = result.error || '';
           const userMsg = /too many|limit|wait/i.test(rawMsg)
-            ? '⏳ Too many attempts. Please wait a few minutes before trying again.'
-            : /invalid/i.test(rawMsg) ? '❌ Invalid ID. Please check and try again.'
-              : '❌ Verification failed. Please try /start again.';
+            ? t('error_rate_limit', lang).replace('{waitTime}', 'few')
+            : /invalid/i.test(rawMsg) ? t('id_invalid', lang)
+              : t('id_error', lang);
           ctx.telegram.editMessageText(ctx.chat.id, otpPromptMsg.message_id, null, userMsg).catch(() => { });
           activeDownloads.delete(userId);
           ctx.session = ctx.session || {}; ctx.session.step = null;
@@ -1885,10 +1936,10 @@ bot.on('text', async (ctx) => {
       state.processingOTP = true;
       const userId = ctx.from.id.toString();
 
-      const validation = validateOTP(text);
+      const validation = validateOTP(text, lang);
       if (!validation.valid) {
         state.processingOTP = false;
-        return ctx.reply(`❌ ${validation.error}. Please enter a valid OTP.`);
+        return ctx.reply(`❌ ${validation.error}.`);
       }
 
       const statusMsg = await ctx.reply("⏳ Verifying...");
@@ -1938,7 +1989,7 @@ bot.on('text', async (ctx) => {
         timer.setPhase('userWaitMs', otpPhaseStart - idPhaseEnd);
       }
 
-      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ Verifying OTP...");
+      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('otp_verifying', lang));
       const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
       // Everything from OTP validation onward is inside try-catch-finally

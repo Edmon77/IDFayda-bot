@@ -1,47 +1,47 @@
 const { Markup } = require('telegraf');
+const { t } = require('./i18n');
 
 const PER_PAGE = 10;
 
-// Reply keyboard button labels (used for text matching in the text handler)
-const BTN = {
-  START: '🚀 START',
-  MANAGE: '👥 Manage Users',
-  DASHBOARD: '📊 Dashboard'
-};
-
 // Persistent reply keyboard at bottom of chat
-function getReplyKeyboard(role) {
-  if (role === 'admin') {
+function getReplyKeyboard(role, lang = 'en') {
+  const buttons = [
+    [t('btn_start', lang), t('btn_manage', lang)],
+    [t('btn_dashboard', lang), t('btn_language', lang)]
+  ];
+
+  if (role !== 'admin') {
+    // user — only START, DASHBOARD, LANGUAGE
     return Markup.keyboard([
-      [BTN.START, BTN.MANAGE],
-      [BTN.DASHBOARD]
+      [t('btn_start', lang), t('btn_dashboard', lang)],
+      [t('btn_language', lang)]
     ]).resize();
   }
-  // user — only START
-  return Markup.keyboard([
-    [BTN.START, BTN.DASHBOARD]
-  ]).resize();
+
+  return Markup.keyboard(buttons).resize();
 }
 
 // Inline keyboard for editMessageText calls (sub-menus, status updates)
-function getMainMenu(role) {
+function getMainMenu(role, lang = 'en') {
   if (role === 'admin') {
     return Markup.inlineKeyboard([
-      [Markup.button.callback('🚀 START', 'download')],
-      [Markup.button.callback('👥 Manage Users', 'manage_users')],
-      [Markup.button.callback('📊 Dashboard', 'dashboard_buyer')]
+      [Markup.button.callback(t('btn_start', lang), 'download')],
+      [Markup.button.callback(t('btn_manage', lang), 'manage_users')],
+      [Markup.button.callback(t('btn_dashboard', lang), 'dashboard_buyer')],
+      [Markup.button.callback(t('btn_language', lang), 'select_language')]
     ]).resize();
   }
   // user
   return Markup.inlineKeyboard([
-    [Markup.button.callback('🚀 START', 'download')],
-    [Markup.button.callback('📊 Dashboard', 'dashboard_user')]
+    [Markup.button.callback(t('btn_start', lang), 'download')],
+    [Markup.button.callback(t('btn_dashboard', lang), 'dashboard_user')],
+    [Markup.button.callback(t('btn_language', lang), 'select_language')]
   ]).resize();
 }
 
-function getPanelTitle(role) {
-  const roleLabel = role === 'admin' ? '_Admin_' : '_User_';
-  return `📌 **WELCOME TO FAYDA BOT**\n${roleLabel} ・ Choose an option:`;
+function getPanelTitle(role, lang = 'en') {
+  const roleLabel = role === 'admin' ? t('role_admin', lang) : t('role_user', lang);
+  return `${t('welcome', lang)}\n${roleLabel} ・ ${t('choose_option', lang)}`;
 }
 
 function paginate(items, page) {
@@ -53,4 +53,4 @@ function paginate(items, page) {
   return { items: slice, page: p, totalPages, total };
 }
 
-module.exports = { BTN, getReplyKeyboard, getMainMenu, getPanelTitle, PER_PAGE, paginate };
+module.exports = { getReplyKeyboard, getMainMenu, getPanelTitle, PER_PAGE, paginate };
