@@ -293,7 +293,13 @@
                                 <div class="revoked-meta">
                                     <span>ID: <code><%= b.telegramId %></code></span>
                                     <span>@<%= b.telegramUsername || '—' %></span>
-                                    <span>Users: <%= b.subUsers ? b.subUsers.length : 0 %></span>
+                                    <span>Users:
+                                        <% if (b.maxSubUsers===-1) { %>
+                                            Unlimited
+                                            <% } else { %>
+                                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers ?? 9 %>
+                                                        <% } %>
+                                    </span>
                                 </div>
                                 <div class="revoked-meta" style="margin-top: 0.25rem;">
                                     <span>Expired: <%= b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : '—'

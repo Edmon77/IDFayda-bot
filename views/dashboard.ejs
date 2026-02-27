@@ -522,8 +522,11 @@
                                 <%= b.totalDownloads %>
                             </td>
                             <td data-label="Users">
-                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers===-1 ? 'Unlimited' :
-                                        (b.maxSubUsers ?? 9) %>
+                                <% if (b.maxSubUsers===-1) { %>
+                                    Unlimited
+                                    <% } else { %>
+                                        <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers ?? 9 %>
+                                                <% } %>
                             </td>
                             <td data-label="Expiry"
                                 class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
