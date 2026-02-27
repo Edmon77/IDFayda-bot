@@ -261,33 +261,39 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
   // Fetch all users to broadcast to
   const users = await User.find({ role: { $in: ['admin', 'user'] } }).select('telegramId').lean();
 
-  if (users.length === 0) {
-    return res.redirect('/announcements?error=No active users found to broadcast to');
-  }
+  // Background the enqueueing to prevent 504 timeouts
+  (async () => {
+    try {
+      // Create official history record
+      const announcement = await Announcement.create({
+        message: message.trim(),
+        recipientsCount: users.length,
+        status: 'pending'
+      });
 
-  // Create official history record
-  const announcement = await Announcement.create({
-    message: message.trim(),
-    recipientsCount: users.length,
-    status: 'pending'
-  });
+      // Enqueue in batches of 50 to maximize speed without overloading Redis/Node
+      for (let i = 0; i < users.length; i += 50) {
+        const batch = users.slice(i, i + 50);
+        await Promise.all(batch.map(user =>
+          broadcastQueue.add({
+            type: 'send',
+            telegramId: user.telegramId,
+            message: message.trim(),
+            announcementId: announcement._id,
+            parseMode: 'Markdown'
+          })
+        ));
+      }
 
-  // Queue up the broadcast jobs
-  for (const user of users) {
-    await broadcastQueue.add({
-      type: 'send',
-      telegramId: user.telegramId,
-      message: message.trim(),
-      announcementId: announcement._id,
-      parseMode: 'Markdown'
-    });
-  }
+      announcement.status = 'completed';
+      await announcement.save();
+      logger.info(`Announcement broadcast enqueued for ${users.length} users successfully.`);
+    } catch (err) {
+      logger.error('Background announcement enqueueing failed:', err);
+    }
+  })();
 
-  announcement.status = 'completed';
-  await announcement.save();
-
-  logger.info(`Announcement broadcast enqueued for ${users.length} users by web admin.`);
-  res.redirect(`/announcements?success=Broadcast for ${users.length} users has been enqueued!`);
+  res.redirect(`/announcements?success=Broadcast for ${users.length} users is being enqueued in the background.`);
 }));
 
 app.post('/announcements/clear/:id', requireWebAuth, asyncHandler(async (req, res) => {
@@ -300,21 +306,34 @@ app.post('/announcements/delete-everyone/:id', requireWebAuth, asyncHandler(asyn
   const announcement = await Announcement.findById(req.params.id);
   if (!announcement) return res.redirect('/announcements?error=Announcement not found');
 
-  // Queue up deletion jobs for every message we tracked
-  for (const msg of announcement.sentMessages) {
-    await broadcastQueue.add({
-      type: 'delete',
-      telegramId: msg.chatId,
-      messageId: msg.messageId
-    });
+  const totalToDelete = announcement.sentMessages.length;
+  if (totalToDelete === 0) {
+    return res.redirect('/announcements?error=No messages have been sent yet for this announcement.');
   }
 
-  announcement.status = 'deleted';
-  announcement.deletedAt = new Date();
-  await announcement.save();
+  // Background the deletion enqueueing
+  (async () => {
+    try {
+      for (let i = 0; i < announcement.sentMessages.length; i += 50) {
+        const batch = announcement.sentMessages.slice(i, i + 50);
+        await Promise.all(batch.map(msg =>
+          broadcastQueue.add({
+            type: 'delete',
+            telegramId: msg.chatId,
+            messageId: msg.messageId
+          })
+        ));
+      }
+      announcement.status = 'deleted';
+      announcement.deletedAt = new Date();
+      await announcement.save();
+      logger.info(`Remote deletion enqueued for announcement ${req.params.id} (${totalToDelete} messages).`);
+    } catch (err) {
+      logger.error('Background remote deletion enqueueing failed:', err);
+    }
+  })();
 
-  logger.info(`Remote deletion enqueued for announcement ${req.params.id} (${announcement.sentMessages.length} messages).`);
-  res.redirect(`/announcements?success=Deletion request enqueued for ${announcement.sentMessages.length} recipients.`);
+  res.redirect(`/announcements?success=Remote deletion enqueued for ${totalToDelete} recipients in the background.`);
 }));
 
 app.post('/pending/remove/:id', requireWebAuth, asyncHandler(async (req, res) => {
