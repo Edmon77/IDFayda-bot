@@ -2018,7 +2018,6 @@ bot.on('text', async (ctx) => {
         timer.setPhase('userWaitMs', otpPhaseStart - idPhaseEnd);
       }
 
-      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('otp_verifying', lang));
       const authHeader = { ...HEADERS, 'Authorization': `Bearer ${state.tempJwt}` };
 
       // Everything from OTP validation onward is inside try-catch-finally
