@@ -1582,7 +1582,6 @@ bot.on('text', async (ctx) => {
           }
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
-          const lang = ctx.state.user?.language || 'en';
           return ctx.reply(t('dashboard_load_fail', lang));
         }
       }
@@ -1704,11 +1703,9 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_USER_ID_UNDER_ADMIN') {
       const userId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(userId)) {
-        const lang = ctx.state.user?.language || 'en';
         return ctx.reply(t('enter_numeric_id', lang));
       }
       const adminId = state.adminIdForUser;
-      const lang = ctx.state.user?.language || 'en';
       const statusMsg = await ctx.reply(t('looking_up', lang));
       try {
         const admin = await User.findOne({ telegramId: adminId });
@@ -1770,7 +1767,6 @@ bot.on('text', async (ctx) => {
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           '❌ Failed to add user. Please try again.'
         ).catch(() => {
-          const lang = ctx.state.user?.language || 'en';
           ctx.reply(t('error_generic', lang));
         });
       }
@@ -1779,7 +1775,6 @@ bot.on('text', async (ctx) => {
 
     // ----- Add Sub‑User Flow -----
     if (state.step === 'AWAITING_SUB_IDENTIFIER') {
-      const lang = ctx.state.user?.language || 'en';
       const buyerId = state.adminForAdd || ctx.from.id.toString();
       const buyer = await User.findOne({ telegramId: buyerId });
 
@@ -1936,7 +1931,6 @@ bot.on('text', async (ctx) => {
 
       // Update message when verify completes (non-blocking — runs in background)
       verifyPromise.then(result => {
-        const lang = user.language || 'en';
         // C1 Fix: If user restarted or cleared session, this promise is no longer the active one
         if (pendingVerifications.get(userId) !== verifyPromise) {
           return; // Silent abort — prevents ghost state updates
@@ -1977,8 +1971,6 @@ bot.on('text', async (ctx) => {
         state.processingOTP = false;
         return ctx.reply(`❌ ${validation.error}.`);
       }
-
-      const lang = ctx.state.user?.language || 'en';
       const statusMsg = await ctx.reply(t('otp_verifying', lang));
 
       // Await background verification (captcha + verify running since ID step)
@@ -2000,7 +1992,6 @@ bot.on('text', async (ctx) => {
         state.processingOTP = false;
         activeDownloads.delete(userId);
         ctx.session = ctx.session || {}; ctx.session.step = null;
-        const lang = ctx.state.user?.language || 'en';
         return ctx.reply(t('error_session', lang));
       }
 
@@ -2010,9 +2001,9 @@ bot.on('text', async (ctx) => {
         ctx.session = ctx.session || {}; ctx.session.step = null;
         const rawMsg = verifyResult.error || '';
         const userMsg = /too many|limit|wait/i.test(rawMsg)
-          ? '⏳ Too many attempts. Please wait a few minutes before trying again.'
-          : /invalid/i.test(rawMsg) ? '❌ Invalid ID. Please check and try again.'
-            : '❌ Verification failed. Please try /start again.';
+          ? t('error_rate_limit', lang).replace('{waitTime}', 'few')
+          : /invalid/i.test(rawMsg) ? t('id_invalid', lang)
+            : t('id_error', lang);
         return ctx.reply(userMsg);
       }
 
@@ -2233,7 +2224,6 @@ bot.on('text', async (ctx) => {
               });
               timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
               timer.report('failed');
-              const lang = ctx.state.user?.language || 'en';
               await ctx.reply(t('pdf_fail', lang));
               ctx.session = ctx.session || {}; ctx.session.step = null;
               activeDownloads.delete(userId);
@@ -2246,7 +2236,6 @@ bot.on('text', async (ctx) => {
             timer.report('queued');
             ctx.session = ctx.session || {}; ctx.session.step = null;
             activeDownloads.delete(userId);
-            const lang = ctx.state.user?.language || 'en';
             await ctx.reply(t('request_queued', lang));
           }
         }
