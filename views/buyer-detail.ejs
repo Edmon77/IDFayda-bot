@@ -250,7 +250,7 @@
                     <%= buyer.expiryDate ? new Date(buyer.expiryDate).toLocaleDateString() : '—' %>
                 </p>
                 <p><strong>Users:</strong>
-                    <%= buyer.subUsers ? buyer.subUsers.length : 0 %> / <%= buyer.maxSubUsers===-1 ? '∞' :
+                    <%= buyer.subUsers ? buyer.subUsers.length : 0 %> / <%= buyer.maxSubUsers===-1 ? 'Unlimited' :
                             (buyer.maxSubUsers ?? 9) %>
                 </p>
             </div>

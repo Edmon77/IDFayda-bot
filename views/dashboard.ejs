@@ -444,7 +444,7 @@
                 <div>
                     <label>Max Sub-Users</label>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <input type="number" id="maxSubUsersInput" value="9" min="0" style="width: 80px;">
+                        <input type="number" id="maxSubUsersInput" value="9" min="0" style="width: 100px;">
                         <input type="hidden" id="maxSubUsersHidden" name="maxSubUsers" value="9">
                         <label
                             style="margin: 0; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; text-transform: none; color: var(--text);">
@@ -522,7 +522,7 @@
                                 <%= b.totalDownloads %>
                             </td>
                             <td data-label="Users">
-                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers===-1 ? '∞' :
+                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers===-1 ? 'Unlimited' :
                                         (b.maxSubUsers ?? 9) %>
                             </td>
                             <td data-label="Expiry"
