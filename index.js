@@ -311,8 +311,9 @@ app.post('/buyer/:id/add-sub', requireWebAuth, asyncHandler(async (req, res) => 
 
   await subUser.save();
   try {
-    await bot.telegram.sendMessage(tid, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-    await bot.telegram.sendMessage(tid, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
+    const uLang = user.language || 'en';
+    await bot.telegram.sendMessage(tid, t('activated', uLang), { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(tid, getPanelTitle('user', uLang), { parse_mode: 'Markdown', ...getReplyKeyboard('user', uLang) });
   } catch (e) { logger.warn('Could not notify new sub-user:', e.message); }
   res.redirect(`/buyer/${req.params.id}`);
 }));
@@ -414,15 +415,18 @@ app.post('/buyer/:id/restore', requireWebAuth, asyncHandler(async (req, res) => 
   try {
     const buyerLang = buyer.language || 'en';
     await bot.telegram.sendMessage(buyer.telegramId, t('access_restored', buyerLang), { parse_mode: 'Markdown' });
-    await bot.telegram.sendMessage(buyer.telegramId, getPanelTitle('admin'), { parse_mode: 'Markdown', ...getReplyKeyboard('admin') });
+    const aLang = buyer.language || 'en';
+    await bot.telegram.sendMessage(buyer.telegramId, getPanelTitle('admin', aLang), { parse_mode: 'Markdown', ...getReplyKeyboard('admin', aLang) });
   } catch (e) {
     logger.warn('Could not notify restored admin:', e.message);
   }
   // Notify sub-users via Telegram
   for (const subId of (buyer.subUsers || [])) {
     try {
-      await bot.telegram.sendMessage(subId, '✅ Your access has been restored!', { parse_mode: 'Markdown' });
-      await bot.telegram.sendMessage(subId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
+      const subUser = await User.findOne({ telegramId: subId }).lean();
+      const subLang = subUser?.language || 'en';
+      await bot.telegram.sendMessage(subId, t('access_restored', subLang), { parse_mode: 'Markdown' });
+      await bot.telegram.sendMessage(subId, getPanelTitle('user', subLang), { parse_mode: 'Markdown', ...getReplyKeyboard('user', subLang) });
     } catch (e) {
       logger.warn(`Could not notify restored sub-user ${subId}:`, e.message);
     }
@@ -616,7 +620,8 @@ bot.start(async (ctx) => {
     });
   } catch (error) {
     logger.error('Start command error:', error);
-    ctx.reply('❌ Error. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -743,7 +748,7 @@ bot.action(/view_admins_page_(\d+)/, async (ctx) => {
     pageAdmins.forEach((a, i) => {
       const count = (a.subUsers || []).length;
       text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'})\n`;
-      text += `   ID: \`${a.telegramId}\`\n   ${t('your_users', lang)}: ${count}\n\n`;
+      text += `   ${t('id_label', lang)} \`${a.telegramId}\`\n   ${t('your_users', lang)}: ${count}\n\n`;
     });
     const btns = [];
     if (totalPages > 1) {
@@ -756,7 +761,8 @@ bot.action(/view_admins_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('View admins error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -773,7 +779,7 @@ bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
     let text = `🛠 **${t('your_users', lang)}** (${t('user_list_page', lang).replace('{p}', p).replace('{totalPages}', totalPages)}):\n\n`;
     pageUsers.forEach((u, i) => {
       text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'})\n`;
-      text += `   ID: \`${u.telegramId}\`\n   PDFs: ${u.downloadCount || 0}\n\n`;
+      text += `   ${t('id_label', lang)} \`${u.telegramId}\`\n   ${t('total_pdfs', lang)} ${u.downloadCount || 0}\n\n`;
     });
     const btns = [];
     if (totalPages > 1) {
@@ -786,7 +792,8 @@ bot.action(/view_my_users_page_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('View my users error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    const lang = admin?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -805,7 +812,7 @@ bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
     }
     let text = `**${t('select_user_remove', lang)}**\n\n`;
     pageAdmins.forEach((a, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ID: \`${a.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(a.firstName) || 'N/A'} (@${escMd(a.telegramUsername) || 'N/A'}) – ${t('id_label', lang)} \`${a.telegramId}\`\n`;
     });
     const btns = pageAdmins.map(a => [Markup.button.callback(t('remove_btn', lang).replace('{name}', escMd(a.firstName) || a.telegramId), `remove_buyer_${a.telegramId}`)]);
     if (totalPages > 1) {
@@ -838,7 +845,7 @@ bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
     }
     let text = `**${t('select_user_remove', lang)}**\n\n`;
     pageUsers.forEach((u, i) => {
-      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'}) – ID: \`${u.telegramId}\`\n`;
+      text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'}) – ${t('id_label', lang)} \`${u.telegramId}\`\n`;
     });
     const btns = pageUsers.map(u => [Markup.button.callback(t('remove_btn', lang).replace('{name}', escMd(u.firstName) || u.telegramId), `remove_my_sub_${u.telegramId}`)]);
     if (totalPages > 1) {
@@ -851,7 +858,8 @@ bot.action(/remove_my_user_list_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove my user list error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -867,7 +875,8 @@ bot.action('add_user_under_admin', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add user under admin error:', error);
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -879,7 +888,8 @@ bot.action('remove_user_under_admin', async (ctx) => {
     const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).select('telegramId firstName telegramUsername subUsers').lean();
     const { items: pageAdmins, page: p, totalPages } = paginate(admins, 1);
     if (!pageAdmins.length) {
-      await ctx.editMessageText('❌ No admins.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+      const lang = ctx.state.user?.language || 'en';
+      await ctx.editMessageText(t('no_admins', lang), Markup.inlineKeyboard([[Markup.button.callback(t('back', lang), 'manage_users')]]));
       return;
     }
     let text = '**Select the admin whose user you want to remove:**\n\n';
@@ -905,13 +915,15 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[2], 10);
     const admin = await User.findOne({ telegramId: adminId }).lean();
     if (!admin) {
-      return ctx.editMessageText('❌ Admin not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'manage_users')]]));
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('admin_not_found', lang), Markup.inlineKeyboard([[Markup.button.callback(t('back', lang), 'manage_users')]]));
     }
     const userIds = admin.subUsers || [];
     const users = await User.find({ telegramId: { $in: userIds } }).select('telegramId firstName telegramUsername').lean();
     const { items: pageUsers, page: p, totalPages } = paginate(users, page);
     if (!pageUsers.length) {
-      return ctx.editMessageText('❌ This admin has no users.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'remove_user_under_admin')]]));
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('admin_no_users', lang), Markup.inlineKeyboard([[Markup.button.callback(t('back', lang), 'remove_user_under_admin')]]));
     }
     let text = `**Remove user under ${escMd(admin.firstName) || admin.telegramId}:**\n\n`;
     pageUsers.forEach((u, i) => {
@@ -967,7 +979,8 @@ bot.action(/subusers_(\d+)/, async (ctx) => {
     const buyerId = ctx.match[1];
     const buyer = await User.findOne({ telegramId: buyerId }).lean();
     if (!buyer) {
-      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'dashboard_buyer')]]));
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('user_not_found', lang), Markup.inlineKeyboard([[Markup.button.callback(t('back', lang), 'dashboard_buyer')]]));
     }
     const subs = await User.find({ telegramId: { $in: buyer.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
@@ -986,7 +999,8 @@ bot.action(/subusers_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
   } catch (error) {
     logger.error('Sub users view error:', error);
-    ctx.reply('❌ Failed. Please try again.');
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang));
   }
 });
 
@@ -1008,8 +1022,8 @@ async function handleDashboard(ctx, isInline, page = 1) {
 
   const lang = buyer.language || 'en';
   let text = `${t('admin_dashboard', lang)}\n\n`;
-  text += `${t('role_admin', lang)}: ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
-  text += `ID: \`${buyer.telegramId}\`\n\n`;
+  text += `${t('admin_label', lang)} ${escMd(buyer.firstName) || 'N/A'} (@${escMd(buyer.telegramUsername) || 'N/A'})\n`;
+  text += `${t('id_label', lang)} \`${buyer.telegramId}\`\n\n`;
   text += `**${t('work_summary', lang)}**\n`;
   text += `${t('own_pdfs', lang)} ${buyerOwn}\n`;
   text += `${t('your_users', lang)} ${subs.length}\n`;
@@ -1018,7 +1032,7 @@ async function handleDashboard(ctx, isInline, page = 1) {
   text += `**${t('user_list_page', lang).replace('{p}', p).replace('{totalPages}', totalPages)}**\n\n`;
   pageSubs.forEach((sub, i) => {
     text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
-    text += `   ID: \`${sub.telegramId}\`\n   PDFs: ${sub.downloadCount || 0}\n\n`;
+    text += `   ${t('id_label', lang)} \`${sub.telegramId}\`\n   ${t('total_pdfs', lang)} ${sub.downloadCount || 0}\n\n`;
   });
 
   const keyboard = [];
@@ -1044,7 +1058,8 @@ bot.action('dashboard_buyer', async (ctx) => {
     await handleDashboard(ctx, true);
   } catch (error) {
     logger.error('Dashboard buyer error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('dashboard_load_fail', lang)).catch(() => { });
   }
 });
 
@@ -1057,7 +1072,7 @@ async function handleUserDashboard(ctx, isInline) {
 
   let text = `${t('your_dashboard', lang)}\n\n`;
   text += `${t('user_label', lang)} ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\n`;
-  text += `ID: \`${user.telegramId}\`\n\n`;
+  text += `${t('id_label', lang)} \`${user.telegramId}\`\n\n`;
   text += `**${t('work_summary', lang)}**\n`;
   text += `${t('total_pdfs', lang)} ${ownDownloads}\n\n`;
 
@@ -1089,7 +1104,8 @@ bot.action('dashboard_user', async (ctx) => {
     await handleUserDashboard(ctx, true);
   } catch (error) {
     logger.error('Dashboard user error:', error);
-    ctx.reply('❌ Failed to load dashboard. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('dashboard_load_fail', lang)).catch(() => { });
   }
 });
 
@@ -1100,7 +1116,8 @@ bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
     await handleDashboard(ctx, true, page);
   } catch (error) {
     logger.error('Dashboard buyer page error:', error);
-    ctx.reply('❌ Failed.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -1114,7 +1131,7 @@ async function handleManageUsers(ctx, isInline) {
 
   if (user.role === 'admin') {
     const title = t('admin_management', lang) + '\n\n';
-    const sub = `${t('role_admin', lang)}: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
+    const sub = `${t('admin_label', lang)} ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\n${t('id_label', lang)} \`${user.telegramId}\`\n\n`;
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback(t('view_my_users', lang), 'view_my_users_page_1')],
       [Markup.button.callback(t('add_user', lang), 'add_sub_self')],
@@ -1164,7 +1181,8 @@ bot.action('add_buyer', async (ctx) => {
     );
   } catch (error) {
     logger.error('Add buyer error:', error);
-    ctx.reply('❌ Failed. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -1198,7 +1216,8 @@ bot.action('view_pending', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
   } catch (error) {
     logger.error('View pending error:', error);
-    ctx.reply('❌ Failed. Please try again.');
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang));
   }
 });
 
@@ -1211,7 +1230,8 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
     const admin = await User.findOne({ telegramId: adminId }).lean();
 
     if (!admin) {
-      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('user_not_found', lang), Markup.inlineKeyboard([
         [Markup.button.callback('🔙 Back', 'manage_users')]
       ]));
     }
@@ -1242,7 +1262,8 @@ bot.action(/select_admin_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     logger.error('Select admin error:', error);
-    ctx.reply('❌ Failed to load user details. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('dashboard_load_fail', lang)).catch(() => { });
   }
 });
 
@@ -1267,7 +1288,8 @@ bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
     );
   } catch (error) {
     logger.error('Add sub admin error:', error);
-    ctx.reply('❌ Failed. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -1284,25 +1306,28 @@ bot.action(/remove_sub_admin_(\d+)/, async (ctx) => {
       .exec();
 
     if (!subs.length) {
-      return ctx.editMessageText('❌ This user has no sub‑users.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Back', `select_admin_${adminId}`)]
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('no_subusers', lang), Markup.inlineKeyboard([
+        [Markup.button.callback(t('back', lang), `select_admin_${adminId}`)]
       ]));
     }
 
-    let text = `**Select a sub‑user to remove from ${escMd(admin.firstName) || escMd(admin.telegramUsername) || adminId}:**\n\n`;
+    const lang = ctx.state.user?.language || 'en';
+    let text = `**${t('select_sub_remove', lang).replace('{name}', escMd(admin.firstName) || escMd(admin.telegramUsername) || adminId)}**\n\n`;
     const buttons = [];
     subs.forEach(sub => {
       const label = `${displayName(sub)} (PDFs: ${sub.downloadCount || 0})`;
       buttons.push([Markup.button.callback(`❌ ${label}`, `remove_sub_${adminId}_${sub.telegramId}`)]);
     });
-    buttons.push([Markup.button.callback('🔙 Back', `select_admin_${adminId}`)]);
+    buttons.push([Markup.button.callback(t('back', lang), `select_admin_${adminId}`)]);
     await ctx.editMessageText(text, {
       parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (error) {
     logger.error('Remove sub admin error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('subusers_load_fail', lang)).catch(() => { });
   }
 });
 
@@ -1314,7 +1339,8 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     const buyerId = ctx.match[1];
     const buyer = await User.findOne({ telegramId: buyerId });
     if (!buyer) {
-      return ctx.editMessageText('❌ User not found.', Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Users', 'manage_users')]]));
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('user_not_found', lang), Markup.inlineKeyboard([[Markup.button.callback(t('back', lang), 'manage_users')]]));
     }
     // Archive sub-user downloads before demoting admin
     if (buyer.subUsers && buyer.subUsers.length > 0) {
@@ -1328,12 +1354,14 @@ bot.action(/remove_buyer_(\d+)/, async (ctx) => {
     buyer.subUsers = [];
     await buyer.save();
     await User.updateMany({ addedBy: buyerId }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
-    await ctx.editMessageText(`✅ Admin removed. They can be added again later.`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Back to Users', 'manage_users')]
+    const lang = ctx.state.user?.language || 'en';
+    await ctx.editMessageText(t('admin_removed', lang), Markup.inlineKeyboard([
+      [Markup.button.callback(t('back', lang), 'manage_users')]
     ]));
   } catch (error) {
     logger.error('Remove buyer error:', error);
-    ctx.reply('❌ Failed. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -1347,8 +1375,9 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
 
     const admin = await User.findOne({ telegramId: adminId });
     if (!admin) {
-      return ctx.editMessageText('❌ Admin not found.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Back to Users', 'manage_users')]
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('admin_not_found', lang), Markup.inlineKeyboard([
+        [Markup.button.callback(t('back', lang), 'manage_users')]
       ]));
     }
 
@@ -1361,12 +1390,14 @@ bot.action(/remove_sub_(\d+)_(\d+)/, async (ctx) => {
     );
     await User.deleteOne({ telegramId: subId });
 
-    await ctx.editMessageText(`✅ Sub‑user removed successfully.`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Back to Admin', `select_admin_${adminId}`)]
+    const lang = ctx.state.user?.language || 'en';
+    await ctx.editMessageText(t('subuser_removed', lang), Markup.inlineKeyboard([
+      [Markup.button.callback(t('back', lang), `select_admin_${adminId}`)]
     ]));
   } catch (error) {
     logger.error('Remove sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('subuser_remove_fail', lang)).catch(() => { });
   }
 });
 
@@ -1380,25 +1411,26 @@ bot.action('manage_subs', async (ctx) => {
       .lean()
       .exec();
 
-    let text = '👥 **Your Sub‑Users**\n\n';
+    const lang = ctx.state.user?.language || 'en';
+    let text = `👥 **${t('your_users', lang)}**\n\n`;
     if (!subs.length) {
-      text += 'You have no sub‑users yet.';
+      text += t('no_users_remove', lang);
     } else {
       subs.forEach((sub, i) => {
         text += `${i + 1}. **${displayName(sub)}** (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
-        text += `   ID: \`${sub.telegramId}\` | PDFs: ${sub.downloadCount || 0}\n`;
+        text += `   ${t('id_label', lang)} \`${sub.telegramId}\` | ${t('total_pdfs', lang)} ${sub.downloadCount || 0}\n`;
       });
     }
 
     const buttons = [
-      [Markup.button.callback('➕ Add Sub‑User', 'add_sub_self')]
+      [Markup.button.callback(t('add_user', lang), 'add_sub_self')]
     ];
     if (subs.length) {
       subs.forEach(sub => {
-        buttons.push([Markup.button.callback(`❌ Remove ${displayName(sub)}`, `remove_my_sub_${sub.telegramId}`)]);
+        buttons.push([Markup.button.callback(t('remove_btn', lang).replace('{name}', displayName(sub)), `remove_my_sub_${sub.telegramId}`)]);
       });
     }
-    buttons.push([Markup.button.callback('🔙 Manage Users', 'manage_users')]);
+    buttons.push([Markup.button.callback(t('back', lang), 'manage_users')]);
 
     await ctx.editMessageText(text, {
       parse_mode: 'Markdown',
@@ -1406,7 +1438,8 @@ bot.action('manage_subs', async (ctx) => {
     });
   } catch (error) {
     logger.error('Manage subs error:', error);
-    ctx.reply('❌ Failed to load sub-users. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('subusers_load_fail', lang)).catch(() => { });
   }
 });
 
@@ -1415,16 +1448,18 @@ bot.action('add_sub_self', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     ctx.session = { ...ctx.session, step: 'AWAITING_SUB_IDENTIFIER' };
+    const lang = ctx.state.user?.language || 'en';
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Cancel', 'cancel_add_sub')]
+      [Markup.button.callback(t('btn_cancel', lang), 'cancel_add_sub')]
     ]);
     await ctx.editMessageText(
-      '📝 **Add Sub‑User**\n\nSend the **Telegram ID** of the person (e.g. \`5434080792\`).\n\n_They must have sent /start to the bot first. Tap Cancel to go back._',
+      `${t('add_sub_title', lang)}\n\n${t('add_sub_prompt', lang)}`,
       { parse_mode: 'Markdown', ...keyboard }
     );
   } catch (error) {
     logger.error('Add sub self error:', error);
-    ctx.reply('❌ Failed. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
@@ -1446,7 +1481,8 @@ bot.action(/cancel_add_sub_(\d+)/, async (ctx) => {
     ctx.session = ctx.session || {}; ctx.session.step = null;
     const admin = await User.findOne({ telegramId: adminId }).lean();
     if (!admin) {
-      return ctx.editMessageText('❌ Cancelled. Admin no longer found.');
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.editMessageText(t('cancel_admin_not_found', lang));
     }
     const subs = await User.find({ telegramId: { $in: admin.subUsers || [] } })
       .select('telegramId firstName telegramUsername downloadCount')
@@ -1492,7 +1528,8 @@ bot.action(/remove_my_sub_(\d+)/, async (ctx) => {
     ]));
   } catch (error) {
     logger.error('Remove my sub error:', error);
-    ctx.reply('❌ Failed to remove sub-user. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('subuser_remove_fail', lang)).catch(() => { });
   }
 });
 
@@ -1545,7 +1582,8 @@ bot.on('text', async (ctx) => {
           }
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
-          return ctx.reply('❌ Error loading dashboard.');
+          const lang = ctx.state.user?.language || 'en';
+          return ctx.reply(t('dashboard_load_fail', lang));
         }
       }
     }
@@ -1666,10 +1704,12 @@ bot.on('text', async (ctx) => {
     if (state.step === 'AWAITING_USER_ID_UNDER_ADMIN') {
       const userId = text.trim().replace(/\s/g, '');
       if (!/^\d+$/.test(userId)) {
-        return ctx.reply('❌ Please enter a numeric Telegram ID for the user.');
+        const lang = ctx.state.user?.language || 'en';
+        return ctx.reply(t('enter_numeric_id', lang));
       }
       const adminId = state.adminIdForUser;
-      const statusMsg = await ctx.reply('🔍 Looking up user...');
+      const lang = ctx.state.user?.language || 'en';
+      const statusMsg = await ctx.reply(t('looking_up', lang));
       try {
         const admin = await User.findOne({ telegramId: adminId });
         if (!admin) {
@@ -1717,8 +1757,10 @@ bot.on('text', async (ctx) => {
           { parse_mode: 'Markdown' }
         );
         try {
-          await bot.telegram.sendMessage(userId, "✅ Your access has been activated!", { parse_mode: 'Markdown' });
-          await bot.telegram.sendMessage(userId, getPanelTitle('user'), { parse_mode: 'Markdown', ...getReplyKeyboard('user') });
+          const subUser = await User.findOne({ telegramId: userId });
+          const subLang = subUser?.language || 'en';
+          await bot.telegram.sendMessage(userId, t('activated', subLang), { parse_mode: 'Markdown' });
+          await bot.telegram.sendMessage(userId, getPanelTitle('user', subLang), { parse_mode: 'Markdown', ...getReplyKeyboard('user', subLang) });
         } catch (e) {
           logger.warn('Could not send activation to user:', e.message);
         }
@@ -1728,7 +1770,8 @@ bot.on('text', async (ctx) => {
         ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
           '❌ Failed to add user. Please try again.'
         ).catch(() => {
-          ctx.reply('❌ Failed to add user. Please try again.');
+          const lang = ctx.state.user?.language || 'en';
+          ctx.reply(t('error_generic', lang));
         });
       }
       return;
@@ -1935,7 +1978,8 @@ bot.on('text', async (ctx) => {
         return ctx.reply(`❌ ${validation.error}.`);
       }
 
-      const statusMsg = await ctx.reply("⏳ Verifying...");
+      const lang = ctx.state.user?.language || 'en';
+      const statusMsg = await ctx.reply(t('otp_verifying', lang));
 
       // Await background verification (captcha + verify running since ID step)
       let verifyResult;
@@ -1956,7 +2000,8 @@ bot.on('text', async (ctx) => {
         state.processingOTP = false;
         activeDownloads.delete(userId);
         ctx.session = ctx.session || {}; ctx.session.step = null;
-        return ctx.reply('❌ Session expired. Please try /start again.');
+        const lang = ctx.state.user?.language || 'en';
+        return ctx.reply(t('error_session', lang));
       }
 
       if (!verifyResult.success) {
@@ -2040,7 +2085,8 @@ bot.on('text', async (ctx) => {
                   return null;
                 }));
 
-                await ctx.reply("🆔 Please enter your FCN/FIN:", { parse_mode: 'Markdown' });
+                const lang = ctx.state.user?.language || 'en';
+                await ctx.reply(t('enter_id', lang), { parse_mode: 'Markdown' });
                 return;
               }
             }
@@ -2063,7 +2109,8 @@ bot.on('text', async (ctx) => {
         state.otpRetryCount = 0;
 
         // Non-blocking status update — PDF fetch starts immediately in parallel
-        ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ OTP verified! Fetching your ID...").catch(() => { });
+        const lang = ctx.state.user?.language || 'en';
+        ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('otp_verified_fetching', lang)).catch(() => { });
 
         // Under heavy load (PREFER_QUEUE_PDF=true) skip sync and always queue for controlled concurrency
         let pdfSent = false;
@@ -2096,7 +2143,7 @@ bot.on('text', async (ctx) => {
               await ctx.replyWithDocument({
                 source: pdfBuffer,
                 filename: filename
-              }, { caption: "✨ Your Digital ID is ready!" });
+              }, { caption: t('digital_id_ready', lang) });
               timer.endStep('telegramUpload');
 
               await incrementUserDownload(userId);
@@ -2167,7 +2214,7 @@ bot.on('text', async (ctx) => {
               await ctx.replyWithDocument({
                 source: pdfBuffer,
                 filename: `${safeName}.pdf`
-              }, { caption: "✨ Your Digital ID is ready!" });
+              }, { caption: t('digital_id_ready', lang) });
               timer.endStep('telegramUpload');
 
               await incrementUserDownload(ctx.from.id.toString());
@@ -2186,7 +2233,8 @@ bot.on('text', async (ctx) => {
               });
               timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
               timer.report('failed');
-              await ctx.reply('❌ Download failed. Please try /start again.');
+              const lang = ctx.state.user?.language || 'en';
+              await ctx.reply(t('pdf_fail', lang));
               ctx.session = ctx.session || {}; ctx.session.step = null;
               activeDownloads.delete(userId);
             }
@@ -2198,7 +2246,8 @@ bot.on('text', async (ctx) => {
             timer.report('queued');
             ctx.session = ctx.session || {}; ctx.session.step = null;
             activeDownloads.delete(userId);
-            await ctx.reply('✅ Your request has been queued. You will receive your PDF shortly.');
+            const lang = ctx.state.user?.language || 'en';
+            await ctx.reply(t('request_queued', lang));
           }
         }
       } catch (e) {
@@ -2245,7 +2294,8 @@ bot.on('text', async (ctx) => {
       ctx.session.processingOTP = false;
       ctx.session.otpRetryCount = 0;
     }
-    ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
   }
 });
 
