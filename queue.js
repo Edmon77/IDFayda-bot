@@ -15,6 +15,11 @@ const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_C
 
 // Bull queue configuration - use Redis URL directly
 const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
+  redis: {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy: (times) => Math.min(times * 100, 3000)
+  },
   defaultJobOptions: {
     attempts: 3,
     backoff: {

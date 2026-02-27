@@ -309,6 +309,15 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
       logger.info(`Announcement broadcast fully enqueued for ${users.length} users successfully.`);
     } catch (err) {
       logger.error('Background announcement enqueueing failed:', err);
+      // Try to mark as failed in DB so admin knows it didn't finish
+      try {
+        const annId = req.params.id || (typeof announcement !== 'undefined' ? announcement._id : null);
+        if (annId) {
+          await Announcement.findByIdAndUpdate(annId, { status: 'failed' });
+        }
+      } catch (dbErr) {
+        logger.error('Failed to mark announcement as failed in DB:', dbErr);
+      }
     }
   })();
 

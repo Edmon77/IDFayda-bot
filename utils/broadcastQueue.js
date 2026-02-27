@@ -4,6 +4,11 @@ const logger = require('./logger');
 
 // Broadcast queue for mass messaging with strict rate limiting
 const broadcastQueue = new Queue('broadcast-messages', process.env.REDIS_URL, {
+    redis: {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+        retryStrategy: (times) => Math.min(times * 100, 3000)
+    },
     defaultJobOptions: {
         attempts: 5,
         backoff: {
