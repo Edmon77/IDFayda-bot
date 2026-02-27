@@ -444,8 +444,10 @@
                 <div>
                     <label>Max Sub-Users</label>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <input type="number" id="maxSubUsersInput" name="maxSubUsers" value="9" min="0" style="width: 80px;">
-                        <label style="margin: 0; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; text-transform: none; color: var(--text);">
+                        <input type="number" id="maxSubUsersInput" value="9" min="0" style="width: 80px;">
+                        <input type="hidden" id="maxSubUsersHidden" name="maxSubUsers" value="9">
+                        <label
+                            style="margin: 0; display: flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; text-transform: none; color: var(--text);">
                             <input type="checkbox" id="unlimitedSubsToggle" style="width: auto;"> Unlimited
                         </label>
                     </div>
@@ -455,14 +457,24 @@
                 <script>
                     const unlimitedToggle = document.getElementById('unlimitedSubsToggle');
                     const maxSubUsersInput = document.getElementById('maxSubUsersInput');
+                    const maxSubUsersHidden = document.getElementById('maxSubUsersHidden');
+
+                    // Keep hidden input in sync when typing manually
+                    maxSubUsersInput.addEventListener('input', (e) => {
+                        maxSubUsersHidden.value = e.target.value;
+                    });
 
                     unlimitedToggle.addEventListener('change', (e) => {
                         if (e.target.checked) {
+                            maxSubUsersInput.type = 'text';
                             maxSubUsersInput.disabled = true;
-                            maxSubUsersInput.value = '-1';
+                            maxSubUsersInput.value = 'Unlimited';
+                            maxSubUsersHidden.value = '-1';
                         } else {
+                            maxSubUsersInput.type = 'number';
                             maxSubUsersInput.disabled = false;
                             maxSubUsersInput.value = '9';
+                            maxSubUsersHidden.value = '9';
                         }
                     });
                 </script>
@@ -510,7 +522,8 @@
                                 <%= b.totalDownloads %>
                             </td>
                             <td data-label="Users">
-                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers === -1 ? '∞' : (b.maxSubUsers ?? 9) %>
+                                <%= b.subUsers ? b.subUsers.length : 0 %> / <%= b.maxSubUsers===-1 ? '∞' :
+                                        (b.maxSubUsers ?? 9) %>
                             </td>
                             <td data-label="Expiry"
                                 class="<%= new Date(b.expiryDate) < new Date() ? 'expired' : (new Date(b.expiryDate) < new Date(Date.now() + 7*24*60*60*1000) ? 'expiring' : '') %>">
