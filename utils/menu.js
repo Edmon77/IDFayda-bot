@@ -19,7 +19,7 @@ function getReplyKeyboard(role) {
   }
   // user — only START
   return Markup.keyboard([
-    [BTN.START]
+    [BTN.START, BTN.DASHBOARD]
   ]).resize();
 }
 
@@ -34,7 +34,8 @@ function getMainMenu(role) {
   }
   // user
   return Markup.inlineKeyboard([
-    [Markup.button.callback('🚀 START', 'download')]
+    [Markup.button.callback('🚀 START', 'download')],
+    [Markup.button.callback('📊 Dashboard', 'dashboard_user')]
   ]).resize();
 }
 

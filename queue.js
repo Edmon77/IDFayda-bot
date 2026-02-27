@@ -118,11 +118,26 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
       ...menu
     });
 
-    // 5. Increment download count for the user
-    await User.updateOne(
-      { telegramId: userId },
-      { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
-    );
+    // 5. Increment download count and update history for the user
+    // We fetch the user first to cleanly manage the history array
+    const userDoc = await User.findOne({ telegramId: userId });
+    if (userDoc) {
+      userDoc.downloadCount = (userDoc.downloadCount || 0) + 1;
+      userDoc.lastDownload = new Date();
+
+      const today = new Date().toISOString().split('T')[0];
+      const history = userDoc.downloadHistory || [];
+      const todayIndex = history.findIndex(h => h.date === today);
+
+      if (todayIndex >= 0) {
+        history[todayIndex].count += 1;
+      } else {
+        history.push({ date: today, count: 1 });
+      }
+
+      userDoc.downloadHistory = history;
+      await userDoc.save();
+    }
 
     logger.info(`PDF sent successfully to user ${userId}`);
     timer.report('success_queued');

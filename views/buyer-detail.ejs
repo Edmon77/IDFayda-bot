@@ -317,7 +317,8 @@
                                             </span>
                             </span>
                             <form method="POST" action="/buyer/<%= buyer.telegramId %>/remove-sub/<%= sub.telegramId %>"
-                                style="display: inline;">
+                                style="display: inline;"
+                                onsubmit="return confirm('Remove this user?');">
                                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                                 <button type="submit" class="btn btn-danger">Remove</button>
                             </form>

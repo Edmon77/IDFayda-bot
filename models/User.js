@@ -20,7 +20,11 @@ const userSchema = new mongoose.Schema({
   usageCount: { type: Number, default: 0 },
   downloadCount: { type: Number, default: 0 },
   archivedSubDownloads: { type: Number, default: 0 },
-  lastDownload: { type: Date }
+  lastDownload: { type: Date },
+  downloadHistory: [{
+    date: { type: String }, // Format: YYYY-MM-DD
+    count: { type: Number }
+  }]
 });
 
 userSchema.index({ role: 1, createdAt: -1 });

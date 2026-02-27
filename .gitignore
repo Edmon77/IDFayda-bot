@@ -32,3 +32,6 @@ build/
 
 # Coverage
 coverage/
+YEGARA_VPS_GUIDE.md
+.gitignore
+ 

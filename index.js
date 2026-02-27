@@ -35,6 +35,24 @@ const pdfQueue = require('./queue');
 const { safeResponseForLog } = require('./utils/logger');
 const { DownloadTimer } = require('./utils/timer');
 
+async function incrementUserDownload(telegramId) {
+  const userDoc = await User.findOne({ telegramId });
+  if (userDoc) {
+    userDoc.downloadCount = (userDoc.downloadCount || 0) + 1;
+    userDoc.lastDownload = new Date();
+    const today = new Date().toISOString().split('T')[0];
+    const history = userDoc.downloadHistory || [];
+    const todayIndex = history.findIndex(h => h.date === today);
+    if (todayIndex >= 0) {
+      history[todayIndex].count += 1;
+    } else {
+      history.push({ date: today, count: 1 });
+    }
+    userDoc.downloadHistory = history;
+    await userDoc.save();
+  }
+}
+
 const PDF_SYNC_ATTEMPTS = 2;
 const PDF_SYNC_RETRY_DELAY_MS = 2000;
 const CAPTCHA_VERIFY_ATTEMPTS = 2;   // Retry on 500 (server) errors only — abort on 400 (client) errors
@@ -298,18 +316,27 @@ app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, asyncHandler(async
 app.post('/buyer/:id/remove', requireWebAuth, asyncHandler(async (req, res) => {
   const buyer = await User.findOne({ telegramId: req.params.id });
   if (!buyer) return res.redirect('/dashboard');
+
   // Archive sub-user downloads before demoting admin
   if (buyer.subUsers && buyer.subUsers.length > 0) {
     const subs = await User.find({ telegramId: { $in: buyer.subUsers } }).select('downloadCount').lean();
     const totalSubDl = subs.reduce((sum, s) => sum + (s.downloadCount || 0), 0);
     buyer.archivedSubDownloads = (buyer.archivedSubDownloads || 0) + totalSubDl;
   }
+
   buyer.role = 'unauthorized';
   buyer.addedBy = undefined;
   buyer.expiryDate = undefined;
+
+  // Apply cascading deletion for the sub-users
+  const subUserIds = buyer.subUsers || [];
   buyer.subUsers = [];
   await buyer.save();
-  await User.updateMany({ addedBy: req.params.id }, { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined });
+
+  if (subUserIds.length > 0) {
+    await User.deleteMany({ telegramId: { $in: subUserIds } });
+  }
+
   res.redirect('/dashboard');
 }));
 
@@ -943,6 +970,50 @@ bot.action('dashboard_buyer', async (ctx) => {
   }
 });
 
+async function handleUserDashboard(ctx, isInline) {
+  const user = ctx.state.user;
+  if (!user || user.role !== 'user') return;
+
+  const ownDownloads = user.downloadCount || 0;
+
+  let text = '📊 **YOUR DASHBOARD**\n\n';
+  text += `User: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\n`;
+  text += `ID: \`${user.telegramId}\`\n\n`;
+  text += '**Work Summary:**\n';
+  text += `Total PDFs: ${ownDownloads}\n\n`;
+
+  text += '**Recent Activity**\n';
+  const history = user.downloadHistory || [];
+  // Sort history descending by date
+  const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
+  const recent3 = sortedHistory.slice(0, 3);
+
+  if (recent3.length === 0) {
+    text += 'No recent activity.\n';
+  } else {
+    recent3.forEach(entry => {
+      text += `${entry.date}\n   Total PDFs Downloaded: ${entry.count}\n`;
+    });
+  }
+
+  const keyboard = [];
+  if (isInline) {
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+  } else {
+    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+  }
+}
+
+bot.action('dashboard_user', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    await handleUserDashboard(ctx, true);
+  } catch (error) {
+    logger.error('Dashboard user error:', error);
+    ctx.reply('❌ Failed to load dashboard. Please try again.').catch(() => { });
+  }
+});
+
 bot.action(/dashboard_buyer_page_(\d+)/, async (ctx) => {
   try {
     await ctx.answerCbQuery();
@@ -993,7 +1064,7 @@ async function handleManageUsers(ctx, isInline) {
     const title = '🛠 **ADMIN USER MANAGEMENT**\n\n';
     const sub = `Admin: ${escMd(user.firstName) || 'N/A'} (@${escMd(user.telegramUsername) || 'N/A'})\nID: \`${user.telegramId}\`\n\n`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('👁 View My Users', 'view_my_users_page_1')],
+      [Markup.button.callback('🔍 View My Users', 'view_my_users_page_1')],
       [Markup.button.callback('➕ Add User', 'add_sub_self')],
       [Markup.button.callback('🗑 Remove User', 'remove_my_user_list_1')]
     ]);
@@ -1399,7 +1470,11 @@ bot.on('text', async (ctx) => {
         return handleManageUsers(ctx, false);
       } else {
         try {
-          return await handleDashboard(ctx, false);
+          if (ctx.state.user && ctx.state.user.role === 'admin') {
+            return await handleDashboard(ctx, false);
+          } else if (ctx.state.user && ctx.state.user.role === 'user') {
+            return await handleUserDashboard(ctx, false);
+          }
         } catch (e) {
           logger.error('Dashboard from keyboard error:', e);
           return ctx.reply('❌ Failed to load dashboard.');
@@ -1933,10 +2008,7 @@ bot.on('text', async (ctx) => {
               }, { caption: "✨ Your Digital ID is ready!" });
               timer.endStep('telegramUpload');
 
-              await User.updateOne(
-                { telegramId: userId },
-                { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
-              );
+              await incrementUserDownload(userId);
               ctx.session = ctx.session || {}; ctx.session.step = null;
               activeDownloads.delete(userId);
               pdfSent = true;
@@ -2007,10 +2079,7 @@ bot.on('text', async (ctx) => {
               }, { caption: "✨ Your Digital ID is ready!" });
               timer.endStep('telegramUpload');
 
-              await User.updateOne(
-                { telegramId: ctx.from.id.toString() },
-                { $inc: { downloadCount: 1 }, $set: { lastDownload: new Date() } }
-              );
+              await incrementUserDownload(ctx.from.id.toString());
               ctx.session = ctx.session || {}; ctx.session.step = null;
               activeDownloads.delete(userId);
               pdfSent = true;
