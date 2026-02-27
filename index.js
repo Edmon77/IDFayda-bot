@@ -591,6 +591,13 @@ bot.start(async (ctx) => {
         logger.warn('Pre-solve captcha on /start failed', { error: err.message });
         return null;
       }));
+      // Auto-cleanup stale captchas after 10 minutes to prevent memory leaks
+      setTimeout(() => {
+        if (pendingCaptchas.has(userId)) {
+          pendingCaptchas.delete(userId);
+          logger.info(`🧹 Cleaned up stale pre-solved captcha for user ${userId} after 10 min idle`);
+        }
+      }, 10 * 60 * 1000);
     }
 
     const title = getPanelTitle(user.role);
@@ -1524,6 +1531,13 @@ bot.on('text', async (ctx) => {
           logger.warn('Pre-solve captcha on BTN.START failed', { error: err.message });
           return null;
         }));
+        // Auto-cleanup stale captchas after 10 minutes to prevent memory leaks
+        setTimeout(() => {
+          if (pendingCaptchas.has(userId)) {
+            pendingCaptchas.delete(userId);
+            logger.info(`🧹 Cleaned up stale pre-solved captcha for user ${userId} after 10 min idle`);
+          }
+        }, 10 * 60 * 1000);
       }
 
       return handleDownload(ctx, false);
