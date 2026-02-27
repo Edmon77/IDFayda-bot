@@ -289,19 +289,19 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
       });
 
       logger.info(`Starting announcement enqueueing for ${users.length} users...`);
-      // Enqueue in batches of 50 to maximize speed without overloading Redis/Node
-      for (let i = 0; i < users.length; i += 50) {
-        const batch = users.slice(i, i + 50);
-        logger.info(`Adding batch ${i / 50 + 1} to broadcastQueue...`);
-        await Promise.all(batch.map(user =>
-          broadcastQueue.add({
-            type: 'send',
-            telegramId: user.telegramId,
-            message: message.trim(),
-            announcementId: announcement._id,
-            parseMode: 'Markdown'
-          })
-        ));
+      let count = 0;
+      for (const user of users) {
+        count++;
+        if (count % 10 === 0 || count === users.length) {
+          logger.info(`Enqueueing job ${count}/${users.length}...`);
+        }
+        await broadcastQueue.add({
+          type: 'send',
+          telegramId: user.telegramId,
+          message: message.trim(),
+          announcementId: announcement._id,
+          parseMode: 'Markdown'
+        });
       }
 
       announcement.status = 'completed';
@@ -333,20 +333,20 @@ app.post('/announcements/delete-everyone/:id', requireWebAuth, asyncHandler(asyn
   // Background the deletion enqueueing
   (async () => {
     try {
-      for (let i = 0; i < announcement.sentMessages.length; i += 50) {
-        const batch = announcement.sentMessages.slice(i, i + 50);
-        await Promise.all(batch.map(msg =>
-          broadcastQueue.add({
-            type: 'delete',
-            telegramId: msg.chatId,
-            messageId: msg.messageId
-          })
-        ));
+      let count = 0;
+      for (const msg of announcement.sentMessages) {
+        count++;
+        if (count % 50 === 0) logger.info(`Enqueueing deletion job ${count}/${totalToDelete}...`);
+        await broadcastQueue.add({
+          type: 'delete',
+          telegramId: msg.chatId,
+          messageId: msg.messageId
+        });
       }
       announcement.status = 'deleted';
       announcement.deletedAt = new Date();
       await announcement.save();
-      logger.info(`Remote deletion enqueued for announcement ${req.params.id} (${totalToDelete} messages).`);
+      logger.info(`Remote deletion fully enqueued for announcement ${req.params.id} (${totalToDelete} messages).`);
     } catch (err) {
       logger.error('Background remote deletion enqueueing failed:', err);
     }

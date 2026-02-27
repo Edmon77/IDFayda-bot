@@ -20,6 +20,15 @@ const broadcastQueue = new Queue('broadcast-messages', process.env.REDIS_URL, {
     }
 });
 
+broadcastQueue.on('ready', () => logger.info('📢 Broadcast Queue: Redis connection established and ready.'));
+broadcastQueue.on('error', (err) => logger.error('❌ Broadcast Queue Error:', err));
+broadcastQueue.on('failed', (job, err) => {
+    if (!err.message.includes('blocked')) {
+        logger.error(`Broadcast job permanently failed to ${job.data.telegramId}:`, err.message);
+    }
+});
+broadcastQueue.on('stalled', (job) => logger.warn(`Broadcast job stalled: ${job.id}`));
+
 const Announcement = require('../models/Announcement');
 
 // Broadcast queue for mass messaging and remote deletions
@@ -70,17 +79,6 @@ broadcastQueue.process(1, async (job) => {
 
         logger.error(`Broadcast ${type} failed for user ${telegramId}:`, err.message);
         throw err;
-    }
-});
-
-broadcastQueue.on('stalled', (job) => {
-    logger.warn(`Broadcast job ${job.id} stalled.`);
-});
-
-broadcastQueue.on('failed', (job, err) => {
-    // We don't want to spam logs for every single block, but we track errors
-    if (!err.message.includes('blocked')) {
-        logger.error(`Broadcast job to ${job.data.telegramId} failed permanently:`, err.message);
     }
 });
 
