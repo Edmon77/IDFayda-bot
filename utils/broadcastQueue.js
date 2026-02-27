@@ -26,6 +26,7 @@ const Announcement = require('../models/Announcement');
 // This worker will process jobs one at a time with a strict delay.
 broadcastQueue.process(1, async (job) => {
     const { type = 'send', telegramId, message, announcementId, messageId: targetMessageId, parseMode = 'Markdown' } = job.data;
+    logger.info(`Processing broadcast job: type=${type}, user=${telegramId}, announcement=${announcementId}`);
 
     try {
         if (type === 'send') {

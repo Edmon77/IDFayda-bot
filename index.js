@@ -288,9 +288,11 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
         status: 'pending'
       });
 
+      logger.info(`Starting announcement enqueueing for ${users.length} users...`);
       // Enqueue in batches of 50 to maximize speed without overloading Redis/Node
       for (let i = 0; i < users.length; i += 50) {
         const batch = users.slice(i, i + 50);
+        logger.info(`Adding batch ${i / 50 + 1} to broadcastQueue...`);
         await Promise.all(batch.map(user =>
           broadcastQueue.add({
             type: 'send',
@@ -304,7 +306,7 @@ app.post('/announcements/send', requireWebAuth, asyncHandler(async (req, res) =>
 
       announcement.status = 'completed';
       await announcement.save();
-      logger.info(`Announcement broadcast enqueued for ${users.length} users successfully.`);
+      logger.info(`Announcement broadcast fully enqueued for ${users.length} users successfully.`);
     } catch (err) {
       logger.error('Background announcement enqueueing failed:', err);
     }
