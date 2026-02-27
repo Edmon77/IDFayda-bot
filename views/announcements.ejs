@@ -472,6 +472,30 @@
                                                 <div class="history-msg" id="msg-<%= item._id %>">
                                                     <%= item.message %>
                                                 </div>
+
+                                                <div class="progress-wrapper" id="progress-<%= item._id %>">
+                                                    <% const processed=(item.sentCount || 0) + (item.failedCount || 0);
+                                                        const percent=item.recipientsCount> 0 ? Math.round((processed /
+                                                        item.recipientsCount) * 100) : 0;
+                                                        %>
+                                                        <div class="progress-bar-bg">
+                                                            <div class="progress-bar-fill"
+                                                                style="width: <%= percent %>%"
+                                                                id="fill-<%= item._id %>"></div>
+                                                        </div>
+                                                        <div class="progress-text">
+                                                            <span id="label-<%= item._id %>">
+                                                                <%= percent %>% Complete (<%= processed %>/<%=
+                                                                            item.recipientsCount %>)
+                                                            </span>
+                                                            <span id="status-text-<%= item._id %>">
+                                                                <%= item.status==='completed' && percent < 100
+                                                                    ? '🚀 Sending...' : (percent>= 100 ? '✅ Finished' :
+                                                                    '⏳ Queued') %>
+                                                            </span>
+                                                        </div>
+                                                </div>
+
                                                 <div class="history-actions">
                                                     <button class="btn btn-ghost btn-sm"
                                                         onclick="toggleExpand('<%= item._id %>')">👁️ View Full</button>
