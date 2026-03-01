@@ -106,6 +106,9 @@ const strings = {
         pdf_direct: '⏳ Processing PDF directly...',
         pdf_fail_queue: "❌ We couldn't generate your PDF after several attempts. Please try again from the start (/start).",
         main_menu_title: '🏠 **Main Menu**\nChoose an option:',
+        detailed_info: 'Detailed Information:',
+        recent_activity_3days: 'Recent Activity (last 3 days):',
+        total_pdfs_downloaded_today: 'Total PDFs Downloaded:',
     },
     am: {
         btn_start: '🚀 ጀምር',
@@ -214,6 +217,9 @@ const strings = {
         pdf_direct: '⏳ ፒዲኤፍ(PDF) በቀጥታ በማዘጋጀት ላይ...',
         pdf_fail_queue: '❌ ፒዲኤፉን(PDF) ማዘጋጀት አልተሳካም። እባክዎ እንደገና በ /start ይሞክሩ።',
         main_menu_title: '🏠 **ዋና ማውጫ**\nአማራጭ ይምረጡ፦',
+        detailed_info: 'ዝርዝር መረጃ፦',
+        recent_activity_3days: 'የቅርብ ጊዜ እንቅስቃሴ (ባለፉት 3 ቀናት)፦',
+        total_pdfs_downloaded_today: 'ጠቅላላ የወረዱ ፒዲኤፎች(PDFs)፦',
     },
     om: {
         btn_start: '🚀 Jalqabi',
@@ -304,7 +310,7 @@ const strings = {
         admin_list_title: '👑 **Bulchaa kee**',
         admin_list_page: 'Bulchaa kee (Fuula {p}/{totalPages})',
         otp_verified_fetching: '⏳ OTP mirkanaa\'e! ID kee fe\'aa jira...',
-        digital_id_ready: '✨ ID Dijitaalaa kee qophaa\'e!',
+        digital_id_ready: '✨ Your Digital ID is ready!',
         request_queued: '✅ Gaaffiin kee hiriira galmeeffame. PDF kee yeroodhaan argatta.',
         admin_label: 'Bulchaa:',
         id_label: 'ID:',
@@ -320,6 +326,9 @@ const strings = {
         pdf_direct: '⏳ PDF kallattiin qopheessaa jira...',
         pdf_fail_queue: '❌ PDF qopheessuu hin milkoofne. Maaloo /start irra deebi\'ii yaali.',
         main_menu_title: '🏠 **Mana Guddaa**\nFilannoowwan keessaa filadhu:',
+        detailed_info: 'Oodeeffannoo bal\'aa:',
+        recent_activity_3days: 'Gocha dhihoo (guyyoota 3n darban):',
+        total_pdfs_downloaded_today: 'Walii gala PDF buufaman:',
     }
 };
 

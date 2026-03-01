@@ -1030,14 +1030,14 @@ async function handleDashboard(ctx, isInline, page = 1) {
   text += `${t('your_users', lang)} ${subs.length}\n`;
   text += `${t('users_pdfs', lang)} ${subDownloads}\n`;
   text += `${t('total_pdfs', lang)} ${total}\n\n`;
-  text += `**${t('user_list_page', lang).replace('{p}', p).replace('{totalPages}', totalPages)}**\n\n`;
-  pageSubs.forEach((sub, i) => {
-    text += `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'})\n`;
-    text += `   ${t('id_label', lang)} \`${sub.telegramId}\`\n   ${t('total_pdfs', lang)} ${sub.downloadCount || 0}\n\n`;
-  });
+  text += `**${t('user_list_page', lang).replace('{p}', p).replace('{totalPages}', totalPages)}**\n`;
 
   const keyboard = [];
-  keyboard.push([Markup.button.callback(t('btn_manage', lang), 'manage_users')]);
+  pageSubs.forEach((sub, i) => {
+    const label = `${(p - 1) * 10 + i + 1}. ${escMd(sub.firstName) || 'N/A'} (@${escMd(sub.telegramUsername) || 'N/A'}) ${t('total_pdfs', lang)} ${sub.downloadCount || 0}`;
+    keyboard.push([Markup.button.callback(label, `detail_user_${sub.telegramId}`)]);
+  });
+
   // Only add pagination buttons if needed
   if (totalPages > 1) {
     const row = [];
@@ -1098,6 +1098,49 @@ async function handleUserDashboard(ctx, isInline) {
     await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
   }
 }
+
+bot.action(/detail_user_(\d+)/, async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const subId = ctx.match[1];
+    const subUser = await User.findOne({ telegramId: subId }).lean();
+    if (!subUser) {
+      const lang = ctx.state.user?.language || 'en';
+      return ctx.reply(t('user_not_found', lang));
+    }
+
+    const lang = ctx.state.user?.language || 'en';
+    let text = `${t('admin_dashboard', lang)}\n`;
+    text += `${t('detailed_info', lang)}\n\n`;
+    text += `${t('user_label', lang)} ${escMd(subUser.firstName) || 'N/A'} (@${escMd(subUser.telegramUsername) || 'N/A'})\n`;
+    text += `${t('id_label', lang)} \`${subUser.telegramId}\`\n\n`;
+    text += `**${t('work_summary', lang)}**\n`;
+    text += `${t('total_pdfs', lang)} ${subUser.downloadCount || 0}\n\n`;
+
+    text += `**${t('recent_activity_3days', lang)}**\n`;
+
+    // Calculate last 3 days dates (including today) in YYYY-MM-DD
+    const dates = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      dates.push(d.toISOString().split('T')[0]);
+    }
+
+    const historyMap = new Map((subUser.downloadHistory || []).map(h => [h.date, h.count]));
+    dates.forEach(date => {
+      const count = historyMap.get(date) || 0;
+      text += `${date}\n   ${t('total_pdfs_downloaded_today', lang)} ${count}\n`;
+    });
+
+    const keyboard = [[Markup.button.callback('🔙 ' + t('back', lang), 'dashboard_buyer')]];
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+  } catch (error) {
+    logger.error('Detail user error:', error);
+    const lang = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', lang)).catch(() => { });
+  }
+});
 
 bot.action('dashboard_user', async (ctx) => {
   try {
