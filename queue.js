@@ -8,6 +8,7 @@ const { parsePdfResponse } = require('./utils/pdfHelper');
 const { getMainMenu } = require('./utils/menu');
 const fayda = require('./utils/faydaClient');
 const { DownloadTimer } = require('./utils/timer');
+const { t } = require('./utils/i18n');
 const PDF_FETCH_ATTEMPTS = 3;
 const PDF_FETCH_RETRY_DELAY_MS = 2000;
 const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_CONCURRENCY, 10) || 10, 1), 50);
@@ -46,9 +47,10 @@ pdfQueue.on('failed', async (job, err) => {
   try {
     const chatId = job?.data?.chatId;
     if (chatId) {
+      const lang = job.data?.language || 'en';
       await bot.telegram.sendMessage(
         chatId,
-        '❌ We couldn\'t generate your PDF after several attempts. Please try again from the start (/start).'
+        t('pdf_fail_queue', lang)
       );
     }
   } catch (notifyErr) {
@@ -64,7 +66,8 @@ logger.info(`PDF queue worker started with concurrency ${PDF_QUEUE_CONCURRENCY}`
 
 // Worker: processes jobs concurrently (configurable for 100–300 users; default 10)
 pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
-  const { chatId, userId, userRole, authHeader, pdfPayload, fullName, _timer } = job.data;
+  const { chatId, userId, userRole, language, authHeader, pdfPayload, fullName, _timer } = job.data;
+  const lang = language || 'en';
 
   // Restore or create timer (preserves requestId from sync flow if available)
   const timer = DownloadTimer.fromSession(_timer, userId);
@@ -108,12 +111,12 @@ pdfQueue.process(PDF_QUEUE_CONCURRENCY, async (job) => {
     await bot.telegram.sendDocument(chatId, {
       source: pdfBuffer,
       filename: filename
-    }, { caption: "✨ Your Digital ID is ready!" });
+    }, { caption: t('digital_id_ready', lang) });
     timer.endStep('telegramUpload');
 
     // 4. Send main menu so user can continue
-    const menu = getMainMenu(userRole || 'user');
-    await bot.telegram.sendMessage(chatId, '🏠 **Main Menu**\nChoose an option:', {
+    const menu = getMainMenu(userRole || 'user', lang);
+    await bot.telegram.sendMessage(chatId, t('main_menu_title', lang), {
       parse_mode: 'Markdown',
       ...menu
     });

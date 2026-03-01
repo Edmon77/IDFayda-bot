@@ -630,6 +630,7 @@ bot.action('select_language', async (ctx) => {
   const lang = ctx.state.user.language || 'en';
   await ctx.editMessageText(t('lang_select', lang), Markup.inlineKeyboard([
     [Markup.button.callback('English 🇺🇸', 'set_lang_en'), Markup.button.callback('Amharic 🇪🇹', 'set_lang_am')],
+    [Markup.button.callback('Afaan-Oromo 🌳', 'set_lang_om')],
     [Markup.button.callback('⬅️ Back', 'main_menu')]
   ]));
 });
@@ -1545,9 +1546,9 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id.toString();
     const hasActiveDownload = activeDownloads.has(userId);
 
-    const isManage = text === t('btn_manage', 'en') || text === t('btn_manage', 'am');
-    const isDashboard = text === t('btn_dashboard', 'en') || text === t('btn_dashboard', 'am');
-    const isLanguage = text === t('btn_language', 'en') || text === t('btn_language', 'am');
+    const isManage = text === t('btn_manage', 'en') || text === t('btn_manage', 'am') || text === t('btn_manage', 'om');
+    const isDashboard = text === t('btn_dashboard', 'en') || text === t('btn_dashboard', 'am') || text === t('btn_dashboard', 'om');
+    const isLanguage = text === t('btn_language', 'en') || text === t('btn_language', 'am') || text === t('btn_language', 'om');
 
     if (isManage || isDashboard || isLanguage) {
       // Non-download menus: auto-cancel any active download, then show menu
@@ -1567,7 +1568,8 @@ bot.on('text', async (ctx) => {
       if (isLanguage) {
         const titleSelection = t('lang_select', lang);
         return ctx.reply(titleSelection, Markup.inlineKeyboard([
-          [Markup.button.callback('English 🇺🇸', 'set_lang_en'), Markup.button.callback('Amharic 🇪🇹', 'set_lang_am')]
+          [Markup.button.callback('English 🇺🇸', 'set_lang_en'), Markup.button.callback('Amharic 🇪🇹', 'set_lang_am')],
+          [Markup.button.callback('Afaan-Oromo 🌳', 'set_lang_om')]
         ]));
       }
 
@@ -1587,7 +1589,7 @@ bot.on('text', async (ctx) => {
       }
     }
 
-    const isStart = text === t('btn_start', 'en') || text === t('btn_start', 'am');
+    const isStart = text === t('btn_start', 'en') || text === t('btn_start', 'am') || text === t('btn_start', 'om');
     if (isStart) {
       // Silently cancel any active download and start fresh (no "Download Cancelled" message)
       if (hasActiveDownload) {
@@ -2051,7 +2053,7 @@ bot.on('text', async (ctx) => {
                 state.processingOTP = false;
                 logger.warn('Invalid OTP entered, allowing retry', { userId, attempt: retryCount + 1 });
                 await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-                  "❌ Invalid OTP. You have 1 more attempt.\nPlease enter the correct OTP:"
+                  t('otp_retry', lang)
                 ).catch(() => { });
                 // Keep session.step = 'OTP' and activeDownloads lock — user stays in OTP step
                 return;
@@ -2066,7 +2068,7 @@ bot.on('text', async (ctx) => {
                 ctx.session = ctx.session || {};
                 ctx.session.step = 'ID';
                 await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-                  "❌ Incorrect OTP. Download cancelled."
+                  `${t('otp_fail', lang)} ${t('download_cancelled', lang)}`
                 ).catch(() => { });
 
                 // Pre-solve captcha for the restart
@@ -2156,7 +2158,7 @@ bot.on('text', async (ctx) => {
               if (attempt < PDF_SYNC_ATTEMPTS) {
                 logger.warn(`Sync PDF attempt ${attempt} failed, retrying`, { error: syncErr.message });
                 // Show user one clean message — no attempt counts
-                await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ Please wait… processing your document.").catch(() => { });
+                await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('pdf_processing', lang)).catch(() => { });
                 await new Promise(r => setTimeout(r, PDF_SYNC_RETRY_DELAY_MS));
               }
             }
@@ -2173,6 +2175,7 @@ bot.on('text', async (ctx) => {
               chatId: ctx.chat.id,
               userId: ctx.from.id.toString(),
               userRole: ctx.state.user?.role || 'user',
+              language: ctx.state.user?.language || 'en',
               authHeader,
               pdfPayload: { uin, signature },
               fullName,
@@ -2184,7 +2187,7 @@ bot.on('text', async (ctx) => {
             logger.info(`PDF job ${job.id} queued (sync failed) for user ${ctx.from.id.toString()}`);
           } catch (queueError) {
             logger.error('Queue add failed, trying sync once more:', queueError);
-            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, "⏳ Processing PDF directly...");
+            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('pdf_direct', lang));
             try {
               timer.startStep('pdfFetch');
               const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
