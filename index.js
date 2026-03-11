@@ -2564,9 +2564,25 @@ bot.on('text', async (ctx) => {
         timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
         timer.report('failed');
         try {
-          const rawErrMsg = e.response?.data?.message || e.message || 'Unknown error';
-          const errMsg = typeof rawErrMsg === 'string' ? rawErrMsg : JSON.stringify(rawErrMsg);
-          await ctx.reply(`❌ Failed: ${errMsg}`);
+          // Extract a clean, user-friendly error message
+          let userErrMsg = 'Unknown error. Please try again.';
+          const respData = e.response?.data;
+          try {
+            const parsed = typeof respData === 'string' ? JSON.parse(respData) : respData;
+            if (parsed?.message) {
+              userErrMsg = String(parsed.message);
+            } else if (typeof respData === 'string' && respData.length < 200) {
+              userErrMsg = respData;
+            }
+          } catch {
+            // Not JSON — use axios error message
+            if (e.message && !e.message.includes('status code')) {
+              userErrMsg = e.message;
+            } else if (e.response?.status) {
+              userErrMsg = `Server error (${e.response.status}). Fayda service may be down. Please try again later.`;
+            }
+          }
+          await ctx.reply(`❌ ${userErrMsg}`);
         } catch (replyError) {
           logger.error('Failed to send error message:', replyError);
         }
