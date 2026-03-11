@@ -24,6 +24,7 @@ const { Markup } = require('telegraf');
 
 const bot = require('./bot');
 const User = require('./models/User');
+const Broadcast = require('./models/Broadcast');
 // auth middleware removed — authorization is handled inline in bot.use()
 const { connectDB, disconnectDB } = require('./config/database');
 const { apiLimiter, checkUserRateLimit } = require('./utils/rateLimiter');
@@ -459,6 +460,93 @@ app.post('/buyer/:id/restore', requireWebAuth, asyncHandler(async (req, res) => 
   }
   res.redirect('/revoked');
 }));
+// ---------- Broadcasting System ----------
+app.get('/broadcast', requireWebAuth, asyncHandler(async (req, res) => {
+  const broadcasts = await Broadcast.find({}).sort({ sentAt: -1 }).lean();
+  res.render('broadcast', { broadcasts });
+}));
+
+app.post('/broadcast/send', requireWebAuth, asyncHandler(async (req, res) => {
+  const { message } = req.body;
+  if (!message || message.trim() === '') {
+    return res.redirect('/broadcast?error=empty_message');
+  }
+
+  // Get all active users (anyone not unauthorized)
+  const recipients = await User.find({ role: { $ne: 'unauthorized' } }).select('telegramId language').lean();
+
+  const broadcast = new Broadcast({
+    message: message.trim(),
+    sentBy: req.session.adminId || 'Admin',
+    totalRecipients: recipients.length,
+    status: 'sending'
+  });
+  await broadcast.save();
+
+  // Start async sending process
+  (async () => {
+    let delivered = 0;
+    let failed = 0;
+    const failedUserIds = [];
+    const messageIds = [];
+
+    for (const recipient of recipients) {
+      try {
+        const sentMsg = await bot.telegram.sendMessage(recipient.telegramId, broadcast.message, { parse_mode: 'Markdown' });
+        delivered++;
+        messageIds.push({ telegramId: recipient.telegramId, messageId: sentMsg.message_id });
+      } catch (e) {
+        failed++;
+        failedUserIds.push(recipient.telegramId);
+        logger.warn(`Failed to broadcast to ${recipient.telegramId}: ${e.message}`);
+      }
+
+      // Update progress every 20 messages to UI
+      if ((delivered + failed) % 20 === 0) {
+        await Broadcast.updateOne({ _id: broadcast._id }, { delivered, failed, messageIds, failedUserIds });
+      }
+
+      // Briefly pause to respect Telegram limit (30 messages per second)
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    // Final update
+    broadcast.status = 'completed';
+    broadcast.delivered = delivered;
+    broadcast.failed = failed;
+    broadcast.messageIds = messageIds;
+    broadcast.failedUserIds = failedUserIds;
+    await broadcast.save();
+  })();
+
+  res.redirect('/broadcast');
+}));
+
+app.post('/broadcast/:id/clear', requireWebAuth, asyncHandler(async (req, res) => {
+  await Broadcast.deleteOne({ _id: req.params.id });
+  res.redirect('/broadcast');
+}));
+
+app.post('/broadcast/:id/delete', requireWebAuth, asyncHandler(async (req, res) => {
+  const broadcast = await Broadcast.findById(req.params.id);
+  if (!broadcast) return res.redirect('/broadcast');
+
+  // Async deletion from Telegram (only works for messages < 48h old)
+  (async () => {
+    for (const item of broadcast.messageIds) {
+      try {
+        await bot.telegram.deleteMessage(item.telegramId, item.messageId);
+      } catch (e) {
+        // Ignore if message is too old or user deleted it
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+  })();
+
+  await Broadcast.deleteOne({ _id: req.params.id });
+  res.redirect('/broadcast');
+}));
+
 app.get('/export-users', requireWebAuth, asyncHandler(async (req, res) => {
   const users = await User.find({}).lean();
   function csvEscape(val) {

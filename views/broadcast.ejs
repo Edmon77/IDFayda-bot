@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broadcasting — Fayda Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0f0f12;
+            --surface: #18181c;
+            --surface2: #1f1f24;
+            --text: #e4e4e7;
+            --muted: #a1a1aa;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --danger: #ef4444;
+            --success: #10b981;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .back {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            transition: color 0.15s;
+            margin-bottom: 1rem;
+        }
+
+        .back:hover {
+            color: var(--text);
+        }
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.25rem;
+        }
+
+        .page-header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 0.75rem;
+            background: var(--surface2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+            resize: vertical;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            justify-content: center;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.25);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text);
+        }
+
+        .btn-outline:hover {
+            background: var(--surface2);
+        }
+
+        .templates {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .history-item {
+            background: var(--surface2);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .history-msg {
+            font-size: 0.85rem;
+            color: var(--muted);
+            background: var(--surface);
+            padding: 0.5rem;
+            border-radius: 6px;
+            white-space: pre-wrap;
+        }
+
+        .history-stats {
+            font-size: 0.8rem;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .history-stats .success {
+            color: var(--success);
+        }
+
+        .history-stats .fail {
+            color: var(--danger);
+        }
+
+        .status-badge {
+            padding: 0.15rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-sending {
+            background: rgba(99, 102, 241, 0.2);
+            color: var(--accent);
+        }
+
+        .status-completed {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .info-msg {
+            padding: 1rem;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent);
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <a href="/dashboard" class="back">← Dashboard</a>
+        <div class="page-header">
+            <h1>📢 Broadcasting</h1>
+        </div>
+
+        <div class="card">
+            <h2>Send New Broadcast</h2>
+            <div class="info-msg">
+                Messages are sent gradually in the background (approx. 20 msgs/second) to avoid Telegram rate limits. It
+                will not block the bot for normal users.
+            </div>
+
+            <div class="templates">
+                <button type="button" class="btn btn-outline" onclick="setTemplate('maintenance_en')">Maintenance
+                    (EN)</button>
+                <button type="button" class="btn btn-outline" onclick="setTemplate('maintenance_am')">Maintenance
+                    (AM)</button>
+                <button type="button" class="btn btn-outline" onclick="setTemplate('maintenance_om')">Maintenance
+                    (OM)</button>
+                <button type="button" class="btn btn-outline" onclick="setTemplate('working_en')">Bot Working
+                    (EN)</button>
+                <button type="button" class="btn btn-outline" onclick="setTemplate('working_am')">Bot Working
+                    (AM)</button>
+            </div>
+
+            <form method="POST" action="/broadcast/send"
+                onsubmit="return confirm('Send this message to ALL authorized admins and sub-users?');">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <div class="form-group">
+                    <textarea name="message" id="messageInput"
+                        placeholder="Type your broadcast message here...\n\nSupports Telegram Markdown format."
+                        required></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">🚀 Send Broadcast</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Broadcast History</h2>
+            <% if (broadcasts.length===0) { %>
+                <p style="color: var(--muted); font-size: 0.85rem;">No previous broadcasts found.</p>
+                <% } else { %>
+                    <% broadcasts.forEach(b=> { %>
+                        <div class="history-item">
+                            <div class="history-header">
+                                <div>
+                                    <strong style="font-size: 0.9rem;">
+                                        <%= new Date(b.sentAt).toLocaleString() %>
+                                    </strong>
+                                    <span class="status-badge status-<%= b.status %>">
+                                        <%= b.status %>
+                                    </span>
+                                </div>
+                                <div class="actions">
+                                    <form method="POST" action="/broadcast/<%= b._id %>/clear" style="margin:0;"
+                                        onsubmit="return confirm('Clear from history? User messages will remain.');">
+                                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                                        <button type="submit" class="btn btn-outline"
+                                            style="padding: 0.25rem 0.5rem; font-size: 0.7rem;">Clear Log</button>
+                                    </form>
+                                    <form method="POST" action="/broadcast/<%= b._id %>/delete" style="margin:0;"
+                                        onsubmit="return confirm('WARNING: Attempt to delete this message from ALL users in Telegram? Note: Telegram only allows deleting messages sent within the last 48 hours.');">
+                                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                                        <button type="submit" class="btn btn-danger"
+                                            style="padding: 0.25rem 0.5rem; font-size: 0.7rem;">Delete from
+                                            Telegram</button>
+                                    </form>
+                                </div>
+                            </div>
+                            <div class="history-msg">
+                                <%= b.message %>
+                            </div>
+                            <div class="history-stats">
+                                <span>Total: <%= b.totalRecipients %></span>
+                                <span class="success">Delivered: <%= b.delivered %></span>
+                                <span class="fail">Failed: <%= b.failed %></span>
+                            </div>
+                        </div>
+                        <% }) %>
+                            <% } %>
+        </div>
+    </div>
+
+    <script>
+        const templates = {
+            maintenance_en: '⏳ **SYSTEM MAINTENANCE**\n\nThe bot is currently undergoing maintenance and will be temporarily unavailable. We will notify you once it is back online.',
+            maintenance_am: '⏳ **የስርዓት ጥገና**\n\nከአቅም በላይ በሆነ ምክንያት ቦቱ አሁን እየሰራ አይደለም። መስራት ሲጀምር እናሳውቆታለን።',
+            maintenance_om: '⏳ **SUPHAA SISTEEMAA**\n\nBoticha amma suphaarra waan jiruuf yeroodhaaf hin hojjetu. Yeroo inni hojiitti deebi\'u isin beeksisna.',
+            working_en: '✅ **SYSTEM RESTored**\n\nThe bot is now fully operational again. You can continue downloading IDs.',
+            working_am: '✅ **ሲስተሙ ተመልሷል**\n\nቦቱ አሁን በሚገባ እየሰራ ነው። መታወቂያዎን ማውረድ መቀጠል ይችላሉ።'
+        };
+
+        function setTemplate(key) {
+            document.getElementById('messageInput').value = templates[key] || '';
+        }
+    </script>
+</body>
+
+</html>
