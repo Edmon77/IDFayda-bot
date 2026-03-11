@@ -2569,13 +2569,18 @@ bot.on('text', async (ctx) => {
           const respData = e.response?.data;
           try {
             const parsed = typeof respData === 'string' ? JSON.parse(respData) : respData;
-            if (parsed?.message) {
-              userErrMsg = String(parsed.message);
+            // Fayda API nests errors: data.message can be an object {errorCode, message, status}
+            let msg = parsed?.message;
+            if (msg && typeof msg === 'object') {
+              msg = msg.message || msg.errorMessage || msg.errorCode || JSON.stringify(msg);
+            }
+            if (msg && typeof msg === 'string') {
+              userErrMsg = msg;
             } else if (typeof respData === 'string' && respData.length < 200) {
               userErrMsg = respData;
             }
           } catch {
-            // Not JSON — use axios error message
+            // Not JSON — use axios error message or status code
             if (e.message && !e.message.includes('status code')) {
               userErrMsg = e.message;
             } else if (e.response?.status) {
