@@ -2480,6 +2480,7 @@ bot.on('text', async (ctx) => {
           timer.report('success');
         } else {
           // Sync failed (or PREFER_QUEUE_PDF) — enqueue for background retries
+          let queueFailed = false;
           try {
             const job = await pdfQueue.add({
               chatId: ctx.chat.id,
@@ -2496,8 +2497,9 @@ bot.on('text', async (ctx) => {
             });
             logger.info(`PDF job ${job.id} queued (sync failed) for user ${ctx.from.id.toString()}`);
           } catch (queueError) {
+            queueFailed = true;
             logger.error('Queue add failed, trying sync once more:', queueError);
-            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('pdf_direct', lang));
+            await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, t('pdf_direct', lang)).catch(() => { });
             try {
               timer.startStep('pdfFetch');
               const pdfResponse = await fayda.api.post('/printableCredentialRoute', { uin, signature }, {
@@ -2539,11 +2541,12 @@ bot.on('text', async (ctx) => {
               await ctx.reply(t('pdf_fail', lang));
               ctx.session = ctx.session || {}; ctx.session.step = null;
               activeDownloads.delete(userId);
+              // pdfSent stays false but queueFailed is true — do NOT show "queued" message
             }
           }
 
-          // Only show "queued" message if we didn't send PDF (queue was used)
-          if (!pdfSent) {
+          // Only show "queued" message if queue succeeded (not if it failed and we already handled the error)
+          if (!pdfSent && !queueFailed) {
             timer.setPhase('otpPhaseMs', Date.now() - otpPhaseStart);
             timer.report('queued');
             ctx.session = ctx.session || {}; ctx.session.step = null;

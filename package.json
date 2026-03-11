@@ -10,7 +10,7 @@
     "pm2:stop": "pm2 stop ecosystem.config.js",
     "pm2:restart": "pm2 restart ecosystem.config.js",
     "create-admin": "node scripts/create-admin.js",
-    "test": "jest"
+    "test": "jest --runInBand --forceExit"
   },
   "dependencies": {
     "2captcha": "^3.0.6",
