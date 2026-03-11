@@ -2274,10 +2274,12 @@ bot.on('text', async (ctx) => {
         return ctx.reply(t('session_expired', lang));
       }
 
-      // Prevent duplicate processing
-      if (state.processingOTP) {
-        return; // Already processing, ignore duplicate
+      // Prevent duplicate processing (atomic lock against webhook retries)
+      if (processingOTPs.has(userId) || state.processingOTP) {
+        logger.warn('Duplicate OTP request ignored (already processing)', { userId });
+        return; // Already processing, ignore duplicate webhook retry
       }
+      processingOTPs.add(userId);
       state.processingOTP = true;
 
       const validation = validateOTP(text, lang);
@@ -2596,6 +2598,7 @@ bot.on('text', async (ctx) => {
       } finally {
         // Always clear processing flag — this now covers ALL code paths
         // including the validateOtp loop that previously escaped this block
+        processingOTPs.delete(userId);
         if (state) {
           state.processingOTP = false;
         }
@@ -2613,6 +2616,7 @@ bot.on('text', async (ctx) => {
     const uid = ctx.from?.id?.toString();
     if (uid) {
       activeDownloads.delete(uid);
+      processingOTPs.delete(uid);
       pendingCaptchas.delete(uid);
       pendingVerifications.delete(uid);
     }
