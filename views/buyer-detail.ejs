@@ -259,6 +259,18 @@
             </div>
         </div>
         <div class="card">
+            <h2>⚙️ Edit Users Limit</h2>
+            <form method="POST" action="/buyer/<%= buyer.telegramId %>/update-max-subs">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <div class="form-group">
+                    <label>Max Users (-1 for Unlimited)</label>
+                    <input type="number" name="maxSubUsers"
+                        value="<%= typeof buyer.maxSubUsers === 'number' ? buyer.maxSubUsers : 9 %>" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Update Limit</button>
+            </form>
+        </div>
+        <div class="card">
             <h2>📊 Download Summary</h2>
             <div class="info">
                 <p><strong>Own PDFs:</strong>

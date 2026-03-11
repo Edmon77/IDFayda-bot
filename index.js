@@ -311,12 +311,38 @@ app.post('/buyer/:id/add-sub', requireWebAuth, asyncHandler(async (req, res) => 
 
   await subUser.save();
   try {
-    const uLang = user.language || 'en';
+    const uLang = subUser.language || 'en';
     await bot.telegram.sendMessage(tid, t('activated', uLang), { parse_mode: 'Markdown' });
     await bot.telegram.sendMessage(tid, getPanelTitle('user', uLang), { parse_mode: 'Markdown', ...getReplyKeyboard('user', uLang) });
   } catch (e) { logger.warn('Could not notify new sub-user:', e.message); }
   res.redirect(`/buyer/${req.params.id}`);
 }));
+app.post('/buyer/:id/update-max-subs', requireWebAuth, asyncHandler(async (req, res) => {
+  const buyerId = req.params.id;
+  const { maxSubUsers } = req.body;
+  const limit = parseInt(maxSubUsers);
+
+  if (isNaN(limit) || limit < -1) {
+    return res.redirect(`/buyer/${buyerId}?error=invalid_limit`);
+  }
+
+  const buyer = await User.findOne({ telegramId: buyerId });
+  if (!buyer) return res.redirect('/dashboard');
+
+  buyer.maxSubUsers = limit;
+  await buyer.save();
+
+  try {
+    const limitText = limit === -1 ? 'Unlimited' : limit;
+    const msg = `ℹ️ Your maximum sub-users limit has been updated to: *${limitText}*`;
+    await bot.telegram.sendMessage(buyerId, msg, { parse_mode: 'Markdown' });
+  } catch (e) {
+    logger.warn('Could not notify admin of sub-user limit change:', e.message);
+  }
+
+  res.redirect(`/buyer/${buyerId}`);
+}));
+
 app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, asyncHandler(async (req, res) => {
   // Archive sub-user downloads before deletion so billing total is preserved
   const sub = await User.findOne({ telegramId: req.params.subId }).select('downloadCount').lean();
@@ -541,8 +567,8 @@ bot.use(async (ctx, next) => {
 
     if (!user || user.role === 'unauthorized') {
       return ctx.reply(
-        `❌ Access Denied\n\nYour Telegram ID: \`${telegramId}\`\n\nSend this ID to an admin to purchase access.`,
-        { parse_mode: 'Markdown', ...Markup.removeKeyboard() }
+        `🚫Access Denied\n\nYour Telegram ID: ${telegramId}\n\nSend this ID to an admin or @yesno_101 to purchase access.\n\n\n🚫 መዳረሻ ተከልክሏል\n\nየቴሌግራም መለያ ቁጥርዎ: ${telegramId}\n\nአገልግሎቱን ለመግዛት ይህን መለያ ቁጥር ለAdmin ወይም ለ @yesno_101 ይላኩ።`,
+        Markup.removeKeyboard()
       );
     }
 
@@ -1854,9 +1880,10 @@ bot.on('text', async (ctx) => {
             '❌ This user is already under this admin.'
           );
         }
-        if ((admin.subUsers || []).length >= 9) {
+        const maxSubs = typeof admin.maxSubUsers === 'number' ? admin.maxSubUsers : 9;
+        if (maxSubs !== -1 && (admin.subUsers || []).length >= maxSubs) {
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            '❌ This admin already has 9 users.'
+            t('admin_limit_reached', lang).replace('{max}', maxSubs)
           );
         }
         if (targetUser.addedBy) {
@@ -1921,10 +1948,11 @@ bot.on('text', async (ctx) => {
           );
         }
 
-        if ((buyer.subUsers || []).length >= 9) {
+        const maxSubs = typeof buyer.maxSubUsers === 'number' ? buyer.maxSubUsers : 9;
+        if (maxSubs !== -1 && (buyer.subUsers || []).length >= maxSubs) {
           ctx.session = ctx.session || {}; ctx.session.step = null;
           return ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-            t('buyer_limit_reached', lang)
+            t('buyer_limit_reached', lang).replace('{max}', maxSubs)
           );
         }
         if ((buyer.subUsers || []).includes(subUser.telegramId)) {
@@ -1994,6 +2022,7 @@ bot.on('text', async (ctx) => {
       ctx.session.id = validation.value;
       ctx.session.verificationMethod = validation.type || 'FCN';
       ctx.session.step = 'OTP';
+      ctx.session._verifyStartTime = Date.now();
       const otpPromptMsg = await ctx.reply(t('enter_otp', lang));
 
       // Launch captcha + verify in background (runs while user waits for SMS)
@@ -2081,12 +2110,22 @@ bot.on('text', async (ctx) => {
 
     // ----- Download Flow: OTP Step -----
     if (state.step === 'OTP') {
+      const userId = ctx.from.id.toString();
+
+      // Staleness check (Fix 5)
+      const maxOtpSessionAge = 5 * 60 * 1000; // 5 minutes
+      if (state._verifyStartTime && (Date.now() - state._verifyStartTime) > maxOtpSessionAge) {
+        activeDownloads.delete(userId);
+        pendingVerifications.delete(userId);
+        ctx.session = ctx.session || {}; ctx.session.step = null;
+        return ctx.reply(t('session_expired', lang));
+      }
+
       // Prevent duplicate processing
       if (state.processingOTP) {
         return; // Already processing, ignore duplicate
       }
       state.processingOTP = true;
-      const userId = ctx.from.id.toString();
 
       const validation = validateOTP(text, lang);
       if (!validation.valid) {
@@ -2167,18 +2206,18 @@ bot.on('text', async (ctx) => {
               timer.endStep('otpValidation');
               const retryCount = state.otpRetryCount || 0;
 
-              if (retryCount < 1) {
-                // First wrong OTP — allow one retry
+              if (retryCount < 2) {
+                // Allow up to 3 tries
                 state.otpRetryCount = retryCount + 1;
                 state.processingOTP = false;
                 logger.warn('Invalid OTP entered, allowing retry', { userId, attempt: retryCount + 1 });
                 await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
                   t('otp_retry', lang)
                 ).catch(() => { });
-                // Keep session.step = 'OTP' and activeDownloads lock — user stays in OTP step
+                // Keep session.step = 'OTP' and activeDownloads lock
                 return;
               } else {
-                // Second wrong OTP — cancel and restart
+                // Final wrong OTP — cancel
                 logger.warn('Invalid OTP on final attempt, cancelling download', { userId });
                 state.processingOTP = false;
                 state.otpRetryCount = 0;
@@ -2186,19 +2225,17 @@ bot.on('text', async (ctx) => {
                 pendingCaptchas.delete(userId);
                 pendingVerifications.delete(userId);
                 ctx.session = ctx.session || {};
-                ctx.session.step = 'ID';
+                ctx.session.step = null;
                 await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
                   `${t('otp_fail', lang)} ${t('download_cancelled', lang)}`
                 ).catch(() => { });
 
-                // Pre-solve captcha for the restart
+                // Pre-solve captcha for next time
                 pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
                   logger.warn('Pre-solve captcha failed, will solve on-demand', { error: err.message });
                   return null;
                 }));
 
-                const lang = ctx.state.user?.language || 'en';
-                await ctx.reply(t('enter_id', lang), { parse_mode: 'Markdown' });
                 return;
               }
             }
