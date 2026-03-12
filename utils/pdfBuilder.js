@@ -65,14 +65,8 @@ const LAYOUT = {
     color: { red: 0.137, green: 0.364, blue: 0.443 }, // #235D71
   },
   
-  // FCN is drawn separately — split into 4 groups at specific X positions
-  fcnPositions: [
-    { x: 73.6 },
-    { x: 90.5 },
-    { x: 107.9 },
-    { x: 126.3 },
-  ],
-  fcnY: 606.0,
+  // FCN is drawn as a single spaced string (e.g. "2971 8516 2793 1407")
+  fcn: { x: 73.6, y: 606.0 },
   
   // Text positions — calibrated to match original PDF exactly
   // lang: 'am' = Amharic font, 'en' = English font
@@ -97,7 +91,7 @@ const LAYOUT = {
     { id: 'phone', x: 59.6, y: 455.29, lang: 'en' },
     
     // Region/City
-    { id: 'regionCity_amh', x: 203.2, y: 554.7, lang: 'am' },
+    { id: 'regionCity_amh', x: 203.2, y: 553.5, lang: 'am' },
     { id: 'regionCity_eng', x: 203.2, y: 544.49, lang: 'en' },
     
     // Subcity/Zone
@@ -112,16 +106,12 @@ const LAYOUT = {
 
 /**
  * Format FCN/FIN with spaces every 4 digits
- * "4658694398563761" → ["4658", "6943", "9856", "3761"]
+ * "4658694398563761" → "4658 6943 9856 3761"
  */
-function splitFCN(fcn) {
-  if (!fcn) return [];
+function formatFCN(fcn) {
+  if (!fcn) return '';
   const digits = String(fcn).replace(/\s/g, '');
-  const groups = [];
-  for (let i = 0; i < digits.length; i += 4) {
-    groups.push(digits.substring(i, i + 4));
-  }
-  return groups;
+  return digits.replace(/(\d{4})(?=\d)/g, '$1 ');
 }
 
 /**
@@ -206,12 +196,12 @@ async function buildFaydaPdf(userData, images) {
     const textColor = rgb(LAYOUT.textOptions.color.red, LAYOUT.textOptions.color.green, LAYOUT.textOptions.color.blue);
     const fontSize = LAYOUT.textOptions.size;
 
-    // 4a. Draw FCN — split into 4 groups at specific x positions (matching original exactly)
-    const fcnGroups = splitFCN(userData.fcn || userData.UIN);
-    for (let i = 0; i < fcnGroups.length && i < LAYOUT.fcnPositions.length; i++) {
-      page.drawText(fcnGroups[i], {
-        x: LAYOUT.fcnPositions[i].x,
-        y: LAYOUT.fcnY,
+    // 4a. Draw FCN — single spaced string (e.g. "2971 8516 2793 1407")
+    const fcnText = formatFCN(userData.fcn || userData.UIN);
+    if (fcnText) {
+      page.drawText(fcnText, {
+        x: LAYOUT.fcn.x,
+        y: LAYOUT.fcn.y,
         size: fontSize,
         font: engFont,
         color: textColor,
