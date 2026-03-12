@@ -14,18 +14,41 @@ let templateBytes = null;
 let englishFontBytes = null;
 let amharicFontBytes = null;
 
-// Page height for coordinate reference: 841.89 (A4)
-// pdfplumber top → pdf-lib y:  y = 841.89 - top
+// pdfplumber 'top' coordinates from the original PDF (efayda_Ayenew_Birhanie_Endalamew.pdf):
+//   FCN groups:       top=228.7, x0=73.6 / 90.5 / 107.9 / 126.3
+//   Amharic Name:     top=218.4, x0=170.7
+//   English Name:     top=230.2, x0=170.7
+//   DOB Ethiopian:    top=281.5, x0=59.6
+//   DOB Gregorian:    top=290.2, x0=59.6
+//   Gender Amh:       top=316.4, x0=59.6
+//   Gender Eng:       top=326.1, x0=59.6
+//   Nationality Amh:  top=347.1, x0=59.6
+//   Nationality Eng:  top=357.1, x0=59.6
+//   Phone:            top=379.4, x0=59.6
+//   Region Amh:       top=281.2, x0=203.2
+//   Region Eng:       top=290.2, x0=203.2
+//   Subcity Amh:      top=316.4, x0=203.2
+//   Subcity Eng:      top=326.1, x0=203.2
+//   Woreda Amh:       top=347.1, x0=203.2
+//   Woreda Eng:       top=357.1, x0=203.2
 
-// The exact layout coordinates aligned with mode3 of generate_data_pdf.py
-// mode3 expects:
-//   FIN:     top ≈ 228,  x0 = 73.6    → y ≈ 613.89
-//   Names:   top ≈ 218-230, x0 ≈ 167   → y ≈ 612-624
-//   DOB:     top ≈ 280-292, x0 ≤ 170    → y ≈ 550-562
-//   City:    top ≈ 281-291, x0 ≥ 200    → y ≈ 551-561
-//   Subcity: top ≈ 315-327, x0 ≥ 200    → y ≈ 515-527
-//   Woreda:  top ≈ 346-358, x0 ≈ 200    → y ≈ 484-496
-//   Phone:   top ≈ 378-380, x0 ≥ 59     → y ≈ 462
+// Calibrated pdf-lib Y values computed from our measured output:
+// Our last test: FCN at top=220.8 with y=613.89  → to get top=228.7 we need y = 613.89 - 7.9 = 606.0
+//                Amh Name at top=212.0 with y=623.89 → to get top=218.4 we need y = 623.89 - 6.4 = 617.5
+//                Eng Name at top=222.8 with y=611.89 → to get top=230.2 we need y = 611.89 - 7.4 = 604.5
+//                DOB_et at top=281.5 with y=553.19  → PERFECT
+//                DOB_eng at top=291.1 with y=553.19 (lineHeight) → need top=290.2, so adjust lineHeight
+//                Gender Amh at top=317.9 with y=517.99 → to get top=316.4 we need y = 517.99 + 1.5 = 519.5
+//                Gender Eng at top=326.1 with y=508.59 → PERFECT
+//                Nat Amh at top=348.6 with y=487.29 → to get top=347.1 we need y = 487.29 + 1.5 = 488.8
+//                Nat Eng at top=357.1 with y=477.59 → PERFECT
+//                Phone at top=379.4 with y=455.29 → PERFECT
+//                Region Amh at top=282.7 with y=553.19 → to get top=281.2 we need y = 553.19 + 1.5 = 554.7
+//                Region Eng at top=290.2 with y=544.49 → PERFECT
+//                Subcity Amh at top=317.9 with y=517.99 → need y = 519.5
+//                Subcity Eng at top=326.1 with y=508.59 → PERFECT
+//                Woreda Amh at top=348.6 with y=487.29 → need y = 488.8
+//                Woreda Eng at top=357.1 with y=477.59 → PERFECT
 
 const LAYOUT = {
   // --- IMAGES ---
@@ -42,52 +65,63 @@ const LAYOUT = {
     color: { red: 0.137, green: 0.364, blue: 0.443 }, // #235D71
   },
   
-  // Text positions — corrected for mode3 compatibility
-  // lang: 'am' = Amharic font, 'en' = English font, 'both' = English font (numbers/mixed)
+  // FCN is drawn separately — split into 4 groups at specific X positions
+  fcnPositions: [
+    { x: 73.6 },
+    { x: 90.5 },
+    { x: 107.9 },
+    { x: 126.3 },
+  ],
+  fcnY: 606.0,
+  
+  // Text positions — calibrated to match original PDF exactly
+  // lang: 'am' = Amharic font, 'en' = English font
   text: [
-    // FCN / FIN number (top ≈ 228, x0 = 73.6)
-    { id: 'fcn',   x: 73.6, y: 613.89, lang: 'en' },
+    // Full Name — Amharic above, English below
+    { id: 'fullName_amh', x: 170.7, y: 617.5, lang: 'am' },
+    { id: 'fullName_eng', x: 170.7, y: 604.5, lang: 'en' },
     
-    // Full Name (top ≈ 218-230, x0 ≈ 170)
-    { id: 'fullName_amh', x: 170.7, y: 623.89, lang: 'am' },
-    { id: 'fullName_eng', x: 170.7, y: 611.89, lang: 'en' },
+    // Date of Birth — two separate lines (Ethiopian then Gregorian)
+    { id: 'dob_et',  x: 59.6, y: 553.19, lang: 'en' },
+    { id: 'dob_eng', x: 59.6, y: 544.49, lang: 'en' },
     
-    // Date of Birth (top ≈ 280-292, x0 ≤ 170) — FIXED: was at phone position
-    { id: 'dob', x: 59.6, y: 553.19, lang: 'en' },
-    
-    // Gender (top ≈ 315-327, x0 ≤ 120)
-    { id: 'gender_amh', x: 59.6, y: 517.99, lang: 'am' },
+    // Gender
+    { id: 'gender_amh', x: 59.6, y: 519.5, lang: 'am' },
     { id: 'gender_eng', x: 59.6, y: 508.59, lang: 'en' },
     
-    // Nationality (top ≈ 346-358, x0 ≤ 120)
-    { id: 'nationality_amh', x: 59.6, y: 487.29, lang: 'am' },
+    // Nationality
+    { id: 'nationality_amh', x: 59.6, y: 488.8, lang: 'am' },
     { id: 'nationality_eng', x: 59.6, y: 477.59, lang: 'en' },
     
-    // Phone Number (top ≈ 378-380, x0 ≥ 59) — FIXED: was at DOB position
+    // Phone Number
     { id: 'phone', x: 59.6, y: 455.29, lang: 'en' },
     
-    // Region/City (top ≈ 281-291, x0 ≥ 200)
-    { id: 'regionCity_amh', x: 203.2, y: 553.19, lang: 'am' },
+    // Region/City
+    { id: 'regionCity_amh', x: 203.2, y: 554.7, lang: 'am' },
     { id: 'regionCity_eng', x: 203.2, y: 544.49, lang: 'en' },
     
-    // Subcity/Zone (top ≈ 315-327, x0 ≥ 200)
-    { id: 'subcityZone_amh', x: 203.2, y: 517.99, lang: 'am' },
+    // Subcity/Zone
+    { id: 'subcityZone_amh', x: 203.2, y: 519.5, lang: 'am' },
     { id: 'subcityZone_eng', x: 203.2, y: 508.59, lang: 'en' },
     
-    // Woreda (top ≈ 346-358, x0 ≈ 200-365)
-    { id: 'woreda_amh', x: 203.2, y: 487.29, lang: 'am' },
+    // Woreda
+    { id: 'woreda_amh', x: 203.2, y: 488.8, lang: 'am' },
     { id: 'woreda_eng', x: 203.2, y: 477.59, lang: 'en' },
   ]
 };
 
 /**
  * Format FCN/FIN with spaces every 4 digits
- * "4658694398563761" → "4658 6943 9856 3761"
+ * "4658694398563761" → ["4658", "6943", "9856", "3761"]
  */
-function formatFCN(fcn) {
-  if (!fcn) return '';
+function splitFCN(fcn) {
+  if (!fcn) return [];
   const digits = String(fcn).replace(/\s/g, '');
-  return digits.replace(/(.{4})/g, '$1 ').trim();
+  const groups = [];
+  for (let i = 0; i < digits.length; i += 4) {
+    groups.push(digits.substring(i, i + 4));
+  }
+  return groups;
 }
 
 /**
@@ -128,12 +162,12 @@ async function buildFaydaPdf(userData, images) {
     
     // 2. Register fontkit and embed both fonts
     pdfDoc.registerFontkit(fontkit);
-    const engFont = await pdfDoc.embedFont(englishFontBytes);
-    const amhFont = await pdfDoc.embedFont(amharicFontBytes);
+    const engFont = await pdfDoc.embedFont(englishFontBytes, { subset: true });
+    const amhFont = await pdfDoc.embedFont(amharicFontBytes, { subset: true });
     
     const page = pdfDoc.getPages()[0];
     
-    // 3. Embed and draw images
+    // 3. Embed and draw images (with JPEG quality reduction for file size)
     const embedImageSafely = async (base64Str) => {
       if (!base64Str) return null;
       const cleanBase64 = base64Str.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
@@ -169,21 +203,27 @@ async function buildFaydaPdf(userData, images) {
 
     // 4. Draw text fields
     const textColor = rgb(LAYOUT.textOptions.color.red, LAYOUT.textOptions.color.green, LAYOUT.textOptions.color.blue);
+    const fontSize = LAYOUT.textOptions.size;
 
-    // Format DOB: Ethiopian date on top, Gregorian below
-    let dobText = '';
-    if (userData.dateOfBirth_et && userData.dateOfBirth_eng) {
-         dobText = `${userData.dateOfBirth_et}\n${userData.dateOfBirth_eng}`;
-    } else if (userData.dateOfBirth_et) {
-         dobText = userData.dateOfBirth_et;
-    } else if (userData.dateOfBirth_eng) {
-         dobText = userData.dateOfBirth_eng;
+    // 4a. Draw FCN — split into 4 groups at specific x positions (matching original exactly)
+    const fcnGroups = splitFCN(userData.fcn || userData.UIN);
+    for (let i = 0; i < fcnGroups.length && i < LAYOUT.fcnPositions.length; i++) {
+      page.drawText(fcnGroups[i], {
+        x: LAYOUT.fcnPositions[i].x,
+        y: LAYOUT.fcnY,
+        size: fontSize,
+        font: engFont,
+        color: textColor,
+      });
     }
 
-    // Map the userData to our layout IDs
+    // 4b. Map the userData to layout IDs — DOB as separate lines
     const fieldMapping = {
-      phone: userData.phone,
-      fcn: formatFCN(userData.fcn || userData.UIN),
+      fullName_amh: userData.fullName_amh,
+      fullName_eng: userData.fullName_eng,
+      
+      dob_et: userData.dateOfBirth_et,
+      dob_eng: userData.dateOfBirth_eng,
       
       gender_amh: userData.gender_amh,
       gender_eng: userData.gender_eng,
@@ -191,7 +231,7 @@ async function buildFaydaPdf(userData, images) {
       nationality_amh: userData.citizenship_amh,
       nationality_eng: userData.citizenship_Eng,
       
-      dob: dobText,
+      phone: userData.phone,
       
       regionCity_amh: userData.region_amh,
       regionCity_eng: userData.region_eng,
@@ -201,9 +241,6 @@ async function buildFaydaPdf(userData, images) {
       
       woreda_amh: userData.woreda_amh,
       woreda_eng: userData.woreda_eng,
-      
-      fullName_amh: userData.fullName_amh,
-      fullName_eng: userData.fullName_eng
     };
 
     for (const field of LAYOUT.text) {
@@ -213,10 +250,9 @@ async function buildFaydaPdf(userData, images) {
         page.drawText(String(textToDraw), {
           x: field.x,
           y: field.y,
-          size: LAYOUT.textOptions.size,
+          size: fontSize,
           font: font,
           color: textColor,
-          lineHeight: 9.6
         });
       }
     }
