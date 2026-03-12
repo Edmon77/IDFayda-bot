@@ -18,7 +18,6 @@ const crypto = require('crypto');
 const helmet = require('helmet');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const SolveCaptcha = require('./utils/solveCaptcha');
 const FaydaAppClient = require('./utils/faydaAppClient');
 const faydaApp = new FaydaAppClient(process.env.FAYDA_APP_API_KEY);
 const { buildFaydaPdf } = require('./utils/pdfBuilder');
@@ -61,8 +60,6 @@ async function incrementUserDownload(telegramId) {
 
 const PDF_SYNC_ATTEMPTS = 2;
 const PDF_SYNC_RETRY_DELAY_MS = 2000;
-const CAPTCHA_VERIFY_ATTEMPTS = 2;   // Retry on 500 (server) errors only — abort on 400 (client) errors
-const CAPTCHA_VERIFY_RETRY_DELAY_MS = 3000;
 const VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes between verification attempts
 
 // Per-user download lock — prevents concurrent downloads and webhook replay storms
@@ -627,11 +624,7 @@ app.use((err, req, res, _next) => {
 });
 
 // ---------- Constants ----------
-// API_BASE removed — accessed directly via fayda.api
-const SITE_KEY = process.env.CAPTCHA_SITE_KEY || "6LcSAIwqAAAAAGsZElBPqf63_0fUtp17idU-SQYC";
-const RECAPTCHA_OPTS = { version: 'v3', action: 'verify', min_score: 0.5 };
 const HEADERS = fayda.HEADERS;
-const solver = new SolveCaptcha(process.env.CAPTCHA_KEY);
 
 const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
 
@@ -792,21 +785,8 @@ bot.start(async (ctx) => {
     const user = ctx.state.user;
     const lang = user.language || 'en';
 
-    // Aggressive pre-solve: Start solving CAPTCHA immediately when user opens the bot
     const userId = ctx.from.id.toString();
-    if (!pendingCaptchas.has(userId) && !activeDownloads.has(userId)) {
-      pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
-        logger.warn('Pre-solve captcha on /start failed', { error: err.message });
-        return null;
-      }));
-      // Auto-cleanup stale captchas after 90 seconds to prevent memory leaks (v3 tokens expire in 2 min)
-      setTimeout(() => {
-        if (pendingCaptchas.has(userId)) {
-          pendingCaptchas.delete(userId);
-          logger.info(`🧹 Cleaned up stale pre-solved captcha for user ${userId} after 90 sec idle`);
-        }
-      }, 90 * 1000);
-    }
+
 
     const title = getPanelTitle(user.role, lang);
     const sentMsg = await ctx.reply(title, {
@@ -872,10 +852,8 @@ async function handleCancel(ctx) {
   ctx.session.otpRetryCount = 0;
   const userId = ctx.from.id.toString();
   const lang = ctx.state.user.language || 'en';
-  // Release download lock and clean up pending background tasks
+  // Release download lock
   activeDownloads.delete(userId);
-  pendingCaptchas.delete(userId);
-  pendingVerifications.delete(userId);
   await ctx.reply(t('download_cancelled', lang));
 }
 
@@ -1847,8 +1825,6 @@ bot.on('text', async (ctx) => {
       // Non-download menus: auto-cancel any active download, then show menu
       if (hasActiveDownload) {
         activeDownloads.delete(userId);
-        pendingCaptchas.delete(userId);
-        pendingVerifications.delete(userId);
         ctx.session = ctx.session || {};
         ctx.session.step = null;
         ctx.session.processingOTP = false;
@@ -1890,28 +1866,12 @@ bot.on('text', async (ctx) => {
       // Silently cancel any active download and start fresh (no "Download Cancelled" message)
       if (hasActiveDownload) {
         activeDownloads.delete(userId);
-        pendingCaptchas.delete(userId);
-        pendingVerifications.delete(userId);
       }
       ctx.session = ctx.session || {};
       ctx.session.step = null;
       ctx.session.processingOTP = false;
       ctx.session.otpRetryCount = 0;
 
-      // Aggressive pre-solve: user tapped the main "⬇️ Download ID" or equivalent menu button
-      if (!pendingCaptchas.has(userId)) {
-        pendingCaptchas.set(userId, solver.recaptcha(SITE_KEY, 'https://resident.fayda.et/', RECAPTCHA_OPTS).then(r => r.data).catch(err => {
-          logger.warn('Pre-solve captcha on BTN.START failed', { error: err.message });
-          return null;
-        }));
-        // Auto-cleanup stale captchas after 10 minutes to prevent memory leaks
-        setTimeout(() => {
-          if (pendingCaptchas.has(userId)) {
-            pendingCaptchas.delete(userId);
-            logger.info(`🧹 Cleaned up stale pre-solved captcha for user ${userId} after 10 min idle`);
-          }
-        }, 10 * 60 * 1000);
-      }
 
       return handleDownload(ctx, false);
     }
@@ -2226,7 +2186,6 @@ bot.on('text', async (ctx) => {
       const maxOtpSessionAge = 5 * 60 * 1000; // 5 minutes
       if (state._verifyStartTime && (Date.now() - state._verifyStartTime) > maxOtpSessionAge) {
         activeDownloads.delete(userId);
-        pendingVerifications.delete(userId);
         ctx.session = ctx.session || {}; ctx.session.step = null;
         return ctx.reply(t('session_expired', lang));
       }
@@ -2246,9 +2205,7 @@ bot.on('text', async (ctx) => {
       }
       const statusMsg = await ctx.reply(t('otp_verifying', lang));
 
-      // Await background verification (captcha + verify running since ID step)
-      // Await background verification (captcha + verify running since ID step)
-      // Removed old pendingVerifications logic. We now use the transactionId saved from ID step.
+      // Use the transactionId saved from ID step.
       const transactionId = state.transactionId;
       if (!transactionId) {
         state.processingOTP = false;
