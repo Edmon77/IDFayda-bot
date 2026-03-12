@@ -72,7 +72,7 @@ const LAYOUT = {
   // lang: 'am' = Amharic font, 'en' = English font
   text: [
     // Full Name — Amharic above, English below
-    { id: 'fullName_amh', x: 170.7, y: 617.5, lang: 'am' },
+    { id: 'fullName_amh', x: 170.7, y: 616.0, lang: 'am' },
     { id: 'fullName_eng', x: 170.7, y: 604.5, lang: 'en' },
     
     // Date of Birth — two separate lines (Ethiopian then Gregorian)
