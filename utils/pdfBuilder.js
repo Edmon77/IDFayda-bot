@@ -8,7 +8,7 @@ const logger = require('./logger');
 const TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'fayda_template.pdf');
 // Dual fonts matching the original Fayda PDF
 const ENGLISH_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'BarlowSemiCondensed-Medium.ttf');
-const AMHARIC_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'AbyssinicaSIL-R.ttf');
+const AMHARIC_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'nyala.ttf');
 
 let templateBytes = null;
 let englishFontBytes = null;
