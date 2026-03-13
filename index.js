@@ -219,8 +219,8 @@ app.get('/logout', (req, res) => {
 });
 app.get('/dashboard', requireWebAuth, asyncHandler(async (req, res) => {
   const admins = await User.find({ role: 'admin' }).sort({ createdAt: -1 }).lean();
-  const allSubIds = admins.flatMap(b => b.subUsers || []);
-  const subs = await User.find({ telegramId: { $in: allSubIds } }).select('telegramId downloadCount').lean();
+  const subs = await User.find({ role: 'user' }).select('telegramId downloadCount').lean();
+  const allSubIds = subs.map(u => u.telegramId);
   const subMap = new Map(subs.map(s => [s.telegramId, s.downloadCount || 0]));
   const revokedCount = await User.countDocuments({ role: 'admin', expiryDate: { $lt: new Date() } });
   const stats = {
@@ -768,6 +768,7 @@ bot.use(async (ctx, next) => {
         user.role = 'trial';
         await User.updateOne({ _id: user._id }, { role: 'trial' });
       } else {
+        ctx.session = {}; // Clear stale states so rejected users can't trigger OTP flows
         return ctx.reply(
           `🚫Access Denied\n\nYour Telegram ID: ${telegramId}\n\nSend this ID to an admin or @yesno_101 to purchase access.\n\n\n🚫 መዳረሻ ተከልክሏል\n\nየቴሌግራም መለያ ቁጥርዎ: ${telegramId}\n\nአገልግሎቱን ለመግዛት ይህን መለያ ቁጥር ለAdmin ወይም ለ @yesno_101 ይላኩ።`,
           Markup.removeKeyboard()
@@ -778,6 +779,7 @@ bot.use(async (ctx, next) => {
     // Trial Mode Enforcement
     if (user.role === 'trial') {
       if (!isTrialActive || (user.downloadCount || 0) >= trialLimit) {
+        ctx.session = {}; // Clear stale states
         return ctx.reply(
           `🚫Free Trial is Over\n\nYour Telegram ID: ${telegramId}\n\nContact @yesno_101 to purchase access.\n\n\n🚫 የነፃ ሙከራ ጊዜዎ አልቋል\n\nየቴሌግራም መለያ ቁጥርዎ: ${telegramId}\n\nአገልግሎቱን ለመግዛት ይህን መለያ ቁጥር ለ @yesno_101 ይላኩ።`,
           Markup.removeKeyboard()
@@ -786,6 +788,7 @@ bot.use(async (ctx, next) => {
     }
 
     if (user.expiryDate && new Date(user.expiryDate) < new Date()) {
+      ctx.session = {}; // Clear stale states
       if (user.role === 'admin') {
         return ctx.reply(t('error_access_revoked_credits', lang), Markup.removeKeyboard());
       }
@@ -800,6 +803,7 @@ bot.use(async (ctx, next) => {
       ).lean();
       if (!parentAdmin || parentAdmin.role === 'unauthorized' ||
         (parentAdmin.expiryDate && new Date(parentAdmin.expiryDate) < new Date())) {
+        ctx.session = {}; // Clear stale states
         return ctx.reply(t('error_access_revoked_admin', lang), Markup.removeKeyboard());
       }
     }
@@ -2255,12 +2259,14 @@ bot.on('text', async (ctx) => {
       }
 
       // Prevent duplicate processing (atomic lock against webhook retries)
-      if (processingOTPs.has(userId) || state.processingOTP) {
+      // Do NOT use state.processingOTP here. If a pod crashes/restarts, the redis session
+      // keeps state.processingOTP = true for an hour, permanently locking the user out silently.
+      // We rely only on the volatile Set `processingOTPs` to deduplicate immediate webhooks.
+      if (processingOTPs.has(userId)) {
         logger.warn('Duplicate OTP request ignored (already processing)', { userId });
         return; // Already processing, ignore duplicate webhook retry
       }
       processingOTPs.add(userId);
-      state.processingOTP = true;
 
       const validation = validateOTP(text, lang);
       if (!validation.valid) {
@@ -2370,7 +2376,6 @@ bot.on('text', async (ctx) => {
         activeDownloads.delete(userId);
       } finally {
         processingOTPs.delete(userId);
-        if (state) state.processingOTP = false;
       }
       return;
     }
