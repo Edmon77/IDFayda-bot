@@ -5,7 +5,7 @@ const fontkit = require('@pdf-lib/fontkit');
 const logger = require('./logger');
 
 // Load the blank template we created
-const TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'fayda_template.pdf');
+const TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'fayda_template_clean.pdf');
 // Dual fonts matching the original Fayda PDF
 const ENGLISH_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'BarlowSemiCondensed-Medium.ttf');
 const AMHARIC_FONT_PATH = path.join(__dirname, '..', 'assets', 'fonts', 'nyala.ttf');
@@ -65,43 +65,33 @@ const LAYOUT = {
     color: { red: 0.137, green: 0.364, blue: 0.443 }, // #235D71
   },
   
-  // For mode3 detection, top MUST be exactly 227-229.
-  // Y = 841.89 - Top - 7.20. Target Top=228.5 => Y ~ 606.19
-  fcn: { x: 73.6, y: 606.19 },
+  // Removed standalone FCN config, it's now in the text sequence array
   
-  // Text positions mathematically calibrated to fit exactly inside generate_data_pdf.py mode3 windows
-  // PDF Top value = 841.89 - Y - 7.20
+  // Text positions mathematically calibrated to exactly match original PDF stream float coordinates
   text: [
-    // Full Name: top must be 217.6 - 231
-    { id: 'fullName_amh', x: 170.7, y: 616.0, lang: 'am' }, 
-    { id: 'fullName_eng', x: 170.7, y: 604.5, lang: 'en' }, 
+    // Left Column
+    { id: 'dob_et',  x: 59.6, y: 553.19, lang: 'en' },
+    { id: 'dob_eng', x: 59.6, y: 544.49, lang: 'en' },
+    { id: 'gender_amh', x: 59.6, y: 517.99, lang: 'am' }, 
+    { id: 'gender_eng', x: 59.6, y: 508.59, lang: 'en' }, 
+    { id: 'nationality_amh', x: 59.6, y: 487.28999999999996, lang: 'am' }, 
+    { id: 'nationality_eng', x: 59.6, y: 477.59, lang: 'en' }, 
+    { id: 'phone', x: 59.6, y: 455.28999999999996, lang: 'en' },
     
-    // Date of Birth: ethiopian top must be 280 - 292
-    { id: 'dob_et',  x: 59.6, y: 554.0, lang: 'en' },  // top=280.69
-    { id: 'dob_eng', x: 59.6, y: 544.0, lang: 'en' },  // top=290.69
+    // Right Column
+    { id: 'regionCity_amh', x: 203.2, y: 553.19, lang: 'am' },
+    { id: 'regionCity_eng', x: 203.2, y: 544.49, lang: 'en' },
+    { id: 'subcityZone_amh', x: 203.2, y: 517.99, lang: 'am' },
+    { id: 'subcityZone_eng', x: 203.2, y: 508.59, lang: 'en' },
+    { id: 'woreda_amh', x: 203.2, y: 487.28999999999996, lang: 'am' },
+    { id: 'woreda_eng', x: 203.2, y: 477.59, lang: 'en' },
     
-    // Gender (Matches Subcity horizontal line visually)
-    { id: 'gender_amh', x: 59.6, y: 518.69, lang: 'am' }, 
-    { id: 'gender_eng', x: 59.6, y: 508.69, lang: 'en' }, 
+    // FCN
+    { id: 'fcn', x: 73.6, y: 605.99, lang: 'en' },
     
-    // Nationality (Matches Woreda horizontal line visually)
-    { id: 'nationality_amh', x: 59.6, y: 487.69, lang: 'am' }, 
-    { id: 'nationality_eng', x: 59.6, y: 477.69, lang: 'en' }, 
-    
-    // Phone Number: top must be 378 - 380
-    { id: 'phone', x: 59.6, y: 455.69, lang: 'en' }, // top=379.0
-    
-    // Region/City: top must be 281 - 291 for BOTH!
-    { id: 'regionCity_amh', x: 203.2, y: 552.69, lang: 'am' }, // top=282.0
-    { id: 'regionCity_eng', x: 203.2, y: 544.69, lang: 'en' }, // top=290.0
-    
-    // Subcity: top must be 315 - 327 for BOTH!
-    { id: 'subcityZone_amh', x: 203.2, y: 518.69, lang: 'am' }, // top=316.0
-    { id: 'subcityZone_eng', x: 203.2, y: 508.69, lang: 'en' }, // top=326.0
-    
-    // Woreda: top must be 346 - 358 for BOTH!
-    { id: 'woreda_amh', x: 203.2, y: 487.69, lang: 'am' }, // top=347.0
-    { id: 'woreda_eng', x: 203.2, y: 477.69, lang: 'en' }, // top=357.0
+    // Full Name
+    { id: 'fullName_amh', x: 170.7, y: 615.99, lang: 'am' }, 
+    { id: 'fullName_eng', x: 170.7, y: 604.49, lang: 'en' }, 
   ]
 };
 
@@ -193,46 +183,30 @@ async function buildFaydaPdf(userData, images) {
       if (backImg) page.drawImage(backImg, LAYOUT.images.back);
     }
 
-    // 4. Draw text fields
+    // 4. Draw text fields securely in EXACT sequence
     const textColor = rgb(LAYOUT.textOptions.color.red, LAYOUT.textOptions.color.green, LAYOUT.textOptions.color.blue);
     const fontSize = LAYOUT.textOptions.size;
 
-    // 4a. Draw FCN — single spaced string (e.g. "2971 8516 2793 1407")
-    const fcnText = formatFCN(userData.fcn || userData.UIN);
-    if (fcnText) {
-      page.drawText(fcnText, {
-        x: LAYOUT.fcn.x,
-        y: LAYOUT.fcn.y,
-        size: fontSize,
-        font: engFont,
-        color: textColor,
-      });
-    }
-
-    // 4b. Map the userData to layout IDs — DOB as separate lines
     const fieldMapping = {
-      fullName_amh: userData.fullName_amh,
-      fullName_eng: userData.fullName_eng,
-      
       dob_et: userData.dateOfBirth_et,
       dob_eng: userData.dateOfBirth_eng,
-      
       gender_amh: userData.gender_amh,
       gender_eng: userData.gender_eng,
-      
       nationality_amh: userData.citizenship_amh,
       nationality_eng: userData.citizenship_Eng,
-      
       phone: userData.phone,
       
       regionCity_amh: userData.region_amh,
       regionCity_eng: userData.region_eng,
-      
       subcityZone_amh: userData.zone_amh,
       subcityZone_eng: userData.zone_eng,
-      
       woreda_amh: userData.woreda_amh,
       woreda_eng: userData.woreda_eng,
+      
+      fcn: formatFCN(userData.fcn || userData.UIN),
+      
+      fullName_amh: userData.fullName_amh,
+      fullName_eng: userData.fullName_eng,
     };
 
     for (const field of LAYOUT.text) {

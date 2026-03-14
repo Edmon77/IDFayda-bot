@@ -36,6 +36,7 @@ System Building Assets/
 # Temporary PDF testing
 *.pdf
 !assets/fayda_template.pdf
+!assets/fayda_template_clean.pdf
 *_actual_user_data.json
 .tmp*
 _tmp*
@@ -43,3 +44,18 @@ _*
 extracted_img_*
 test_output.txt
 sample_output.pdf
+
+# AI Research & Temp Scripts
+test_*.js
+dump_*.py
+clean_*.py
+extract_*.py
+tm_order.py
+search*.py
+*.txt
+*.py
+!utils/
+!logger.js
+!faydaAppClient.js
+!pdfBuilder.js
+
