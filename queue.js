@@ -17,6 +17,7 @@ const PDF_QUEUE_CONCURRENCY = Math.min(Math.max(parseInt(process.env.PDF_QUEUE_C
 // Bull queue configuration - use Redis URL directly
 const pdfQueue = new Queue('pdf generation', process.env.REDIS_URL, {
   redis: {
+    tls: process.env.REDIS_URL.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     keepAlive: 10000,
@@ -72,8 +73,14 @@ pdfQueue.on('stalled', (job) => {
 });
 
 pdfQueue.on('error', (err) => {
-  if (err.message && err.message.includes('ECONNRESET')) return;
+  if (err.message && (err.message.includes('ECONNRESET') || err.message.includes('EPIPE'))) return;
   logger.error('Bull queue Redis error:', { message: err.message });
+});
+
+// Catch raw Redis socket errors to prevent PM2 crashes from upstream disconnects (e.g., Upstash)
+pdfQueue.client.on('error', (err) => {
+  if (err.message && (err.message.includes('ECONNRESET') || err.message.includes('EPIPE'))) return;
+  logger.error('Raw Bull client error:', { message: err.message });
 });
 
 logger.info(`PDF queue worker started with concurrency ${PDF_QUEUE_CONCURRENCY}`);

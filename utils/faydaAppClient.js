@@ -31,7 +31,7 @@ class FaydaAppClient {
         ...DEFAULT_HEADERS,
         'x-api-key': this.apiKey
       },
-      timeout: 15000 // 15 seconds timeout
+      timeout: 30000 // 30 seconds timeout
     });
   }
 

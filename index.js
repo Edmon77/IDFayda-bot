@@ -451,7 +451,7 @@ app.post('/buyer/:buyerId/remove-sub/:subId', requireWebAuth, asyncHandler(async
     $pull: { subUsers: req.params.subId },
     $inc: { archivedSubDownloads: dlCount }
   });
-  await User.deleteOne({ telegramId: req.params.subId });
+  await User.updateOne({ telegramId: req.params.subId }, { $set: { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined } });
   res.redirect(`/buyer/${req.params.buyerId}`);
 }));
 app.post('/buyer/:id/remove', requireWebAuth, asyncHandler(async (req, res) => {
@@ -475,7 +475,10 @@ app.post('/buyer/:id/remove', requireWebAuth, asyncHandler(async (req, res) => {
   await buyer.save();
 
   if (subUserIds.length > 0) {
-    await User.deleteMany({ telegramId: { $in: subUserIds } });
+    await User.updateMany(
+      { telegramId: { $in: subUserIds } },
+      { $set: { role: 'unauthorized', addedBy: undefined, parentAdmin: undefined, expiryDate: undefined } }
+    );
   }
 
   res.redirect('/dashboard');
@@ -764,7 +767,7 @@ bot.use(async (ctx, next) => {
     const trialLimit = publicMode ? (publicMode.value || 5) : 5;
 
     if (!user || user.role === 'unauthorized') {
-      if (isTrialActive && user) {
+      if (isTrialActive && user && user.usageCount <= 1 && (user.downloadCount || 0) === 0) {
         user.role = 'trial';
         await User.updateOne({ _id: user._id }, { role: 'trial' });
       } else {
