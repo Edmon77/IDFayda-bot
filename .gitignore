@@ -34,9 +34,8 @@ build/
 System Building Assets/
  
 # Temporary PDF testing
-*.pdf
-!assets/fayda_template.pdf
-!assets/fayda_template_clean.pdf
+
+
 *_actual_user_data.json
 .tmp*
 _tmp*
