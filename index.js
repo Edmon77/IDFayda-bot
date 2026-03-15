@@ -2,15 +2,16 @@
 const { validateEnv } = require('./config/env');
 validateEnv();
 
-// ---------- Keep process alive on unhandled errors (log and continue) ----------
+// ---------- Keep process alive on unhandled errors ----------
 const logger = require('./utils/logger');
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at', { reason, stack: reason?.stack });
 });
 process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception', { message: err.message, stack: err.stack });
-  // Don't exit - allow bot to keep serving other users (exit only on next fatal)
-  // process.exit(1);
+  logger.error('Uncaught Exception — exiting in 1 s so PM2/Docker can restart', { message: err.message, stack: err.stack });
+  // After an uncaught exception Node is in an undefined state; exit and let the
+  // process manager restart the service cleanly.
+  setTimeout(() => process.exit(1), 1000);
 });
 
 const express = require('express');
@@ -21,7 +22,7 @@ const MongoStore = require('connect-mongo');
 const FaydaAppClient = require('./utils/faydaAppClient');
 const faydaApp = new FaydaAppClient(process.env.FAYDA_APP_API_KEY);
 const { buildFaydaPdf } = require('./utils/pdfBuilder');
-const fayda = require('./utils/faydaClient'); // Kept for legacy routes if any
+const fayda = require('./utils/faydaClient'); // Legacy client (kept for shared axios agent)
 const { Markup } = require('telegraf');
 
 const bot = require('./bot');
@@ -63,7 +64,8 @@ const PDF_SYNC_RETRY_DELAY_MS = 2000;
 const VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes between verification attempts
 
 // Per-user download lock — prevents concurrent downloads and webhook replay storms
-const activeDownloads = new Map(); // telegramId → true
+const activeDownloads = new Map(); // telegramId → timestamp (ms)
+const ACTIVE_DOWNLOAD_TTL_MS = 5 * 60 * 1000; // 5 min max lock lifetime
 // Per-user verification cooldown — prevents OTP flood on Fayda API
 const verificationCooldown = new Map(); // telegramId → timestamp of last failure
 
@@ -277,6 +279,7 @@ app.post('/public-mode/toggle', requireWebAuth, asyncHandler(async (req, res) =>
   }
   
   await setting.save();
+  _settingsCache.ts = 0; // Invalidate cache so bot picks up change immediately
   res.redirect('/dashboard');
 }));
 
@@ -293,6 +296,7 @@ app.post('/maintenance/toggle', requireWebAuth, asyncHandler(async (req, res) =>
   }
   setting.enabled = !setting.enabled;
   await setting.save();
+  _settingsCache.ts = 0; // Invalidate cache
 
   // Notify all active users of the mode switch
   const activeUsers = await User.find({ role: { $ne: 'unauthorized' } }).select('telegramId language role').lean();
@@ -670,10 +674,21 @@ app.use((err, req, res, _next) => {
   res.status(500).send('Something went wrong. Please try again later.');
 });
 
-// ---------- Constants ----------
-const HEADERS = fayda.HEADERS;
-
-const PREFER_QUEUE_PDF = process.env.PREFER_QUEUE_PDF === 'true' || process.env.PREFER_QUEUE_PDF === '1';
+// ---------- Settings Cache (avoid 2 DB queries on every Telegram update) ----------
+let _settingsCache = { maintenance: null, publicMode: null, ts: 0 };
+const SETTINGS_CACHE_TTL_MS = 30_000; // refresh every 30 s
+async function getCachedSettings() {
+  const now = Date.now();
+  if (now - _settingsCache.ts < SETTINGS_CACHE_TTL_MS && _settingsCache.maintenance !== null) {
+    return _settingsCache;
+  }
+  const [maintenance, publicMode] = await Promise.all([
+    Settings.findOne({ key: 'maintenance' }).lean(),
+    Settings.findOne({ key: 'publicMode' }).lean()
+  ]);
+  _settingsCache = { maintenance, publicMode, ts: now };
+  return _settingsCache;
+}
 
 // ---------- Error Handler Middleware ----------
 bot.catch(async (err, ctx) => {
@@ -753,8 +768,8 @@ bot.use(async (ctx, next) => {
 
     const lang = user ? (user.language || 'en') : 'en';
 
-    // Maintenance Mode Check
-    const maintenance = await Settings.findOne({ key: 'maintenance' }).lean();
+    // Maintenance Mode Check (cached — avoids 2 DB queries per message)
+    const { maintenance, publicMode } = await getCachedSettings();
     if (maintenance && maintenance.enabled) {
       if (!maintenance.allowedUsers || !maintenance.allowedUsers.includes(telegramId)) {
         return ctx.reply(t('maintenance_mode_msg', lang), Markup.removeKeyboard());
@@ -762,7 +777,6 @@ bot.use(async (ctx, next) => {
     }
 
     // Public Mode Check
-    const publicMode = await Settings.findOne({ key: 'publicMode' }).lean();
     const isTrialActive = publicMode && publicMode.enabled;
     const trialLimit = publicMode ? (publicMode.value || 5) : 5;
 
@@ -1075,7 +1089,8 @@ bot.action(/remove_admin_list_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove admin list error:', error);
-    ctx.reply(t('error_generic', lang)).catch(() => { });
+    const langErr = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', langErr)).catch(() => { });
   }
 });
 
@@ -1160,7 +1175,8 @@ bot.action('remove_user_under_admin', async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove user under admin error:', error);
-    ctx.reply(t('error_generic', lang)).catch(() => { });
+    const langErr = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', langErr)).catch(() => { });
   }
 });
 
@@ -1187,13 +1203,13 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
       text += `${(page - 1) * 10 + i + 1}. ${escMd(u.firstName) || 'N/A'} (@${escMd(u.telegramUsername) || 'N/A'})\n`;
       text += `       ID: \`${u.telegramId}\`\n`;
     });
+    const lang = ctx.state.user?.language || 'en';
     const btns = pageUsers.map(u => {
       const name = u.firstName || u.telegramId;
       const removeText = `❌ ${t('remove_btn', lang)}`;
       const padding = ' '.repeat(Math.max(2, 50 - removeText.length - name.length));
       return [Markup.button.callback(`${removeText}${padding}${name}`, `remove_sub_${adminId}_${u.telegramId}`)];
     });
-    const lang = ctx.state.user?.language || 'en';
     if (totalPages > 1) {
       const row = [];
       if (p > 1) row.push(Markup.button.callback('⏮️ ' + t('back', lang), `remove_under_admin_${adminId}_${p - 1}`));
@@ -1204,7 +1220,8 @@ bot.action(/remove_under_admin_(\d+)_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
   } catch (error) {
     logger.error('Remove under admin page error:', error);
-    ctx.reply(t('error_generic', lang)).catch(() => { });
+    const langErr = ctx.state.user?.language || 'en';
+    ctx.reply(t('error_generic', langErr)).catch(() => { });
   }
 });
 
@@ -1621,7 +1638,7 @@ bot.action(/add_sub_admin_(\d+)/, async (ctx) => {
       step: 'AWAITING_SUB_IDENTIFIER',
       adminForAdd: adminId
     };
-    const lang = buyer.language || 'en';
+    const lang = ctx.state.user?.language || 'en';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback(t('btn_cancel', lang), `cancel_add_sub_${adminId}`)]
     ]);
@@ -2197,7 +2214,7 @@ bot.on('text', async (ctx) => {
         return ctx.reply(t('error_rate_limit', lang).replace('{waitTime}', waitSec));
       }
 
-      activeDownloads.set(userId, true);
+      activeDownloads.set(userId, Date.now());
       const statusMsg = await ctx.reply(t('looking_up', lang) || 'Looking up ID...');
 
       const timer = new DownloadTimer(userId);
@@ -2452,8 +2469,15 @@ async function startServer() {
       }
       if (cooldownCleared > 0) logger.info(`Cleaned up ${cooldownCleared} expired verification cooldowns`);
 
-      // We don't sweep activeDownloads by time directly
-      // because they might be legitimately long-running or properly cleaned by error catch blocks now.
+      // Sweep stale activeDownloads (users locked > 5 min due to uncaught crash)
+      let dlCleared = 0;
+      for (const [userId, ts] of activeDownloads.entries()) {
+        if (typeof ts === 'number' && now - ts > ACTIVE_DOWNLOAD_TTL_MS) {
+          activeDownloads.delete(userId);
+          dlCleared++;
+        }
+      }
+      if (dlCleared > 0) logger.info(`Cleaned up ${dlCleared} stale download locks`);
     }, 15 * 60 * 1000); // Check every 15 minutes
     // Set webhook
     const webhookPath = '/webhook';
@@ -2464,8 +2488,15 @@ async function startServer() {
       logger.warn(`⚠️ WEBHOOK_DOMAIN missing protocol, added https://`);
     }
     const webhookUrl = `${webhookDomain}${webhookPath}`;
-    await bot.telegram.setWebhook(webhookUrl);
-    app.use(bot.webhookCallback(webhookPath));
+    // Webhook secret prevents forged updates from non-Telegram sources
+    const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.randomBytes(32).toString('hex');
+    await bot.telegram.setWebhook(webhookUrl, { secret_token: WEBHOOK_SECRET });
+    app.use(webhookPath, (req, res, next) => {
+      if (req.headers['x-telegram-bot-api-secret-token'] !== WEBHOOK_SECRET) {
+        return res.sendStatus(403);
+      }
+      next();
+    }, bot.webhookCallback(webhookPath));
 
     // Warn if WEBHOOK_DOMAIN looks like a placeholder
     if (/your-app-name|example\.com|localhost/.test(process.env.WEBHOOK_DOMAIN || '')) {

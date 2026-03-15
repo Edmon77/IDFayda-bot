@@ -3,7 +3,7 @@ const logger = require('../utils/logger');
 
 const requiredEnvVars = [
   'BOT_TOKEN',
-  'CAPTCHA_KEY',
+  'FAYDA_APP_API_KEY',
   'MONGODB_URI',
   'SESSION_SECRET',
   'REDIS_URL',
