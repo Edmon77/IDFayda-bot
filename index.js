@@ -2491,12 +2491,7 @@ async function startServer() {
     // Webhook secret prevents forged updates from non-Telegram sources
     const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.randomBytes(32).toString('hex');
     await bot.telegram.setWebhook(webhookUrl, { secret_token: WEBHOOK_SECRET });
-    app.use(webhookPath, (req, res, next) => {
-      if (req.headers['x-telegram-bot-api-secret-token'] !== WEBHOOK_SECRET) {
-        return res.sendStatus(403);
-      }
-      next();
-    }, bot.webhookCallback(webhookPath));
+    app.use(webhookPath, bot.webhookCallback('/', { secretToken: WEBHOOK_SECRET }));
 
     // Warn if WEBHOOK_DOMAIN looks like a placeholder
     if (/your-app-name|example\.com|localhost/.test(process.env.WEBHOOK_DOMAIN || '')) {
